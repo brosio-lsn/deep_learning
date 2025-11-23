@@ -98,7 +98,7 @@ def main():
     cfg = BoardConfig(H=4, W=5, n_digits=3)
     vocab_size = 12   # 0-9, PLUS, BLANK
 
-    n_train_problems = 40000
+    n_train_problems = 500_000
     n_val_problems = 2000
     batch_size = 64
     num_epochs = 5
@@ -458,7 +458,7 @@ def main2():
         nhead=4,
         num_layers=3,
         dim_feedforward=512,
-        max_len=200 #unsure what to set,
+        max_len=200, #unsure what to set,
         dropout=0.1,
     ).to(device)
 
@@ -681,4 +681,4 @@ def main2():
 
 if __name__ == "__main__":
     main()
-    main2()
+   #main2()

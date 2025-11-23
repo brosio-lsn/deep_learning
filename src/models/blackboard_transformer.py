@@ -180,7 +180,7 @@ class COTTransformer(nn.Module):
         nhead: int = 4,
         num_layers: int = 3,
         dim_feedforward: int = 512,
-        max_len: int,
+        max_len: int = 200,
         dropout: float = 0.1,
     ):
         super().__init__()
