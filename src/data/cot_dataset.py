@@ -16,7 +16,7 @@ from src.data.addition_algo import number_to_digits
 COT_VOCAB_TOKENS: List[str] = [
     "Input", "Step", "Output", "carry",
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-    "+", "=", ".", ",", ":",
+    "+", "=", ".", ",", ":", "PAD"
 ]
 
 VOCAB = {tok: i for i, tok in enumerate(COT_VOCAB_TOKENS)}
@@ -47,7 +47,7 @@ def encode_cot_full(problem: AdditionProblem) -> Tuple[List[int], List[bool]]:
       Step 1 : 2 + 5 + 0 = 7 , carry 0 .
       Step 2 : 1 + 3 + 0 = 4 , carry 0 .
       Step 3 : 1 + 2 + 0 = 3 , carry 0 .
-      Output : 3 4 7 .
+      Output : 0 3 4 7 .
 
     mask[i] is True on the '7' and '0' in Step1, '4' and '0' in Step2, etc.
     """
@@ -118,6 +118,8 @@ def encode_cot_full(problem: AdditionProblem) -> Tuple[List[int], List[bool]]:
 
     add("Output")
     add(":")
+    if len(out_digits) == 3:
+        add(str(0), supervise=False)
     for d in out_digits:
         add(str(d), supervise=False)
     add(".")
@@ -125,6 +127,17 @@ def encode_cot_full(problem: AdditionProblem) -> Tuple[List[int], List[bool]]:
     # Map tokens to ids
     token_ids = [_encode_token(t) for t in tokens]
     return token_ids, mask
+
+
+def build_block_mask(seq_len: int, this_step_start: int):
+    #avoid tokens from the same current step to attend to each other
+    mask = torch.zeros((seq_len, seq_len))
+    for q in range(this_step_start, seq_len):
+        for k in range(this_step_start, seq_len):
+            if k != q:                     # allow self-attention
+                mask[q, k] = float("-inf")
+    return mask
+
 
 
 # ---------------------------------------------------------------------------
@@ -155,6 +168,9 @@ class CoTAdditionDataset(Dataset):
 
     def __init__(self, problems: List[AdditionProblem]):
         self.problems = problems
+        self.encodings = {}
+        for i in range(len(problems)):
+            self.encodings[i] = encode_cot_full(problems[i])
         if len(problems) == 0:
             raise ValueError("CoTAdditionDataset requires at least one problem.")
         self.cfg = problems[0].cfg
@@ -164,6 +180,8 @@ class CoTAdditionDataset(Dataset):
         return len(self.problems) * self.n_steps
 
     def __getitem__(self, idx: int):
+
+        """
         # Map global idx to (problem_idx, step_idx)
         problem_idx = idx // self.n_steps
         step_idx = idx % self.n_steps  # 0 .. n_digits-1
@@ -174,6 +192,7 @@ class CoTAdditionDataset(Dataset):
         # --- Find all 'Step' token positions (starts of steps) ---
         step_positions = [i for i, tok_id in enumerate(token_ids)
                           if ID2TOK[tok_id] == "Step"]
+
         assert len(step_positions) == self.n_steps, "Expected one 'Step' per column."
 
         # This step's 'Step' token index:
@@ -207,6 +226,9 @@ class CoTAdditionDataset(Dataset):
                 mask_tgt_list.append(True)
             else:
                 mask_tgt_list.append(False)
+        
+
+        attn_mask = build_block_mask(seq_ids, this_step_start)
 
         # Input is prefix only (no tokens from this step)
         input_ids_t = torch.tensor(prefix_token_ids, dtype=torch.long)
@@ -217,4 +239,47 @@ class CoTAdditionDataset(Dataset):
             "input_ids":  input_ids_t,   # (L_prefix,)
             "target_ids": target_ids_t,  # (L_step-1,)
             "mask":       mask_tgt_t,    # (L_step-1,), exactly 2 True entries
+        }
+        """
+
+        problem_idx = idx // self.n_steps
+        step_idx = idx % self.n_steps  # 0..n_steps-1 
+
+        token_ids, mask_full = self.encodings[problem_idx]  # length L full CoT
+
+        # Find all 'Step' starts
+        step_positions = [i for i, tok_id in enumerate(token_ids)
+                        if ID2TOK[tok_id] == "Step"]
+
+        # Range for Input
+        input_end = step_positions[0]
+
+        # Range for all completed steps (including this one)
+        this_step_start = step_positions[step_idx]
+
+        supervised_positions = [i for i, m in enumerate(mask_full) if m]
+        digit_pos = supervised_positions[2 * step_idx]
+        carry_pos = supervised_positions[2 * step_idx + 1]
+        # Full sequence up to this step
+
+        labels = token_ids[:carry_pos+1]  # NOT shifted
+        inputs =  labels.copy()
+        inputs[this_step_start:] = VOCAB["PAD"]
+        seq_len = len(labels)
+
+        # Build loss mask aligned with labels
+        loss_mask = [False] * seq_len
+        for j in range(seq_len):
+            if j == digit_pos or j == carry_pos:
+                loss_mask[j] = True
+
+        # Build attention mask
+        attn_mask = build_block_mask(seq_len, this_step_start)
+
+        return {
+            "input_ids": torch.tensor(inputs, dtype=torch.long), # (L_prefix + L_step, ) # real ids for prefix tokens, PAD IDS for the current step tokens
+            "label_ids": torch.tensor(labels, dtype=torch.long), # (L_prefix + L_step, ) # all real ids
+            "loss_mask": torch.tensor(loss_mask, dtype=torch.bool), # (L_prefix + L_step, ) # only true for resultig digit and carry of the current step
+            "attn_mask": attn_mask,   # (L_prefix + L_step, L_prefix + L_step) float tensor with -inf for positions a token cannot attend
+            "this_step_start": this_step_start
         }

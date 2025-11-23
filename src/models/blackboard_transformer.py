@@ -170,3 +170,84 @@ class BlackboardTransformer(nn.Module):
         if return_attn:
             return logits, attn_all_layers
         return logits, None
+
+
+class COTTransformer(nn.Module):
+    def __init__(
+        self,
+        vocab_size: int,
+        d_model: int = 128,
+        nhead: int = 4,
+        num_layers: int = 3,
+        dim_feedforward: int = 512,
+        max_len: int,
+        dropout: float = 0.1,
+    ):
+        super().__init__()
+        self.vocab_size = vocab_size
+        self.d_model = d_model
+
+        self.token_emb = nn.Embedding(vocab_size, d_model)
+        self.pos_enc = SinusoidalPositionalEncoding(d_model, max_len=max_len)
+
+        self.layers = nn.ModuleList([
+            InspectableEncoderLayer(
+                d_model=d_model,
+                nhead=nhead,
+                dim_feedforward=dim_feedforward,
+                dropout=dropout,
+            )
+            for _ in range(num_layers)
+        ])
+
+        self.output_proj = nn.Linear(d_model, vocab_size)
+
+    def forward(
+        self,
+        input_ids: torch.Tensor,                       # (B, L)
+        src_mask: torch.Tensor,
+        src_key_padding_mask: Optional[torch.Tensor] = None,  # (B, L) or None
+        return_attn: bool = False,
+    ) -> Tuple[torch.Tensor, Optional[List[torch.Tensor]]]:
+        """
+        Args:
+            input_ids: (B, L) token ids (flattened board)
+            src_key_padding_mask: (B, L) bool, True for PAD positions (if used)
+            return_attn: if True, also return attention matrices
+
+        Returns:
+            logits: (B, L, vocab_size)
+            attn_all_layers (optional): list of length num_layers, where each
+                element is a tensor of shape (B, n_heads, L, L) with attention
+                weights for that layer. If return_attn=False, this is None.
+        """
+        # 1) token embeddings + positional encodings
+        x = self.token_emb(input_ids) * math.sqrt(self.d_model)  # (B, L, D)
+        x = self.pos_enc(x)
+
+        attn_all_layers: Optional[List[torch.Tensor]] = [] if return_attn else None
+
+        # 2) pass through each encoder layer
+        for layer in self.layers:
+            if return_attn:
+                x, attn = layer(
+                    x,
+                    src_mask=src_mask,
+                    src_key_padding_mask=src_key_padding_mask,
+                    need_attn_weights=True,
+                )
+                attn_all_layers.append(attn)   # (B, n_heads, L, L)
+            else:
+                x, _ = layer(
+                    x,
+                    src_mask=src_mask,
+                    src_key_padding_mask=src_key_padding_mask,
+                    need_attn_weights=False,
+                )
+
+        # 3) project to logits
+        logits = self.output_proj(x)  # (B, L, vocab_size)
+
+        if return_attn:
+            return logits, attn_all_layers
+        return logits, None
