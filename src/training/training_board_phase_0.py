@@ -13,6 +13,7 @@ from src.models.blackboard_transformer import BlackboardTransformer
 from src.data.cot_dataset import CoTAdditionDataset, COT_VOCAB_TOKENS
 from src.data.sampler import BucketBatchSampler
 from src.models.blackboard_transformer import COTTransformer
+from src.models.positional_encodings import *
 
 
 def masked_cross_entropy(logits, target_ids, mask):
@@ -114,239 +115,67 @@ def main():
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader   = DataLoader(val_ds,   batch_size=batch_size, shuffle=False)
 
-    # ----- Model -----
-    model = BlackboardTransformer(
-        vocab_size=vocab_size,
-        d_model=128,
-        nhead=4,
-        num_layers=3,
-        dim_feedforward=512,
-        max_len=cfg.H * cfg.W,
-        dropout=0.1,
-    ).to(device)
+    d_model = 128
+    max_len = cfg.H * cfg.W
+    n_heads = 4
 
-    # >>> print number of parameters <<<
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Model parameters: {total_params:,} total | {trainable_params:,} trainable")
-    print(f"≈ {trainable_params/1e6:.3f}M trainable parameters\n")
+    pes = [('Relative PE', RelativePositionBias2D(n_heads, cfg.H, cfg.W)),('Sinusoidal PE', SinusoidalPositionalEncoding(d_model, max_len=max_len)), 
+    ('Absolute PE', AbsolutePositionalEncoding2D(d_model, cfg.H, cfg.W))]
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    for pe in pes:
+        print(f'Starting {pe[0]} ...')
+        # ----- Model -----
+        model = BlackboardTransformer(
+            vocab_size=vocab_size,
+            d_model=d_model,
+            nhead=n_heads,
+            num_layers=3,
+            dim_feedforward=512,
+            max_len=max_len,
+            dropout=0.1,
+            pos_enc = pe[1]
+        ).to(device)
 
-    # history for later inspection / plotting
-    history = {
-        "train_loss": [],
-        "train_acc": [],
-        "train_carry_acc": [],
-        "train_digit_acc": [],
-        "val_loss": [],
-        "val_acc": [],
-        "val_carry_acc": [],
-        "val_digit_acc": [],
-    }
+        # >>> print number of parameters <<<
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Model parameters: {total_params:,} total | {trainable_params:,} trainable")
+        print(f"≈ {trainable_params/1e6:.3f}M trainable parameters\n")
 
-    # ----- Epoch 0: evaluate random (untrained) model -----
-    model.eval()
+        print("Precise Overview of Trainable Parameters:\n")
+        for name, param in model.named_parameters():
+            if param.requires_grad:
+                print(name, param.shape)
 
-    # --- train set baseline ---
-    init_train_loss = 0.0
-    init_train_tokens = 0
-    init_train_correct = 0
-    init_train_carry_correct = 0
-    init_train_carry_tokens = 0
-    init_train_digit_correct = 0
-    init_train_digit_tokens = 0
+        optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
-    pbar_init_train = tqdm(train_loader, desc="Epoch 0 [train, random]")
-    with torch.no_grad():
-        for batch in pbar_init_train:
-            input_ids  = batch["input_ids"].to(device)
-            target_ids = batch["target_ids"].to(device)
-            mask       = batch["mask"].to(device)
-
-            logits, _ = model(input_ids)
-
-            loss = masked_cross_entropy(logits, target_ids, mask)
-            batch_tokens = mask.sum().item()
-            batch_loss = loss.item()
-
-            (b_total_correct,
-             b_total_tokens,
-             b_carry_correct,
-             b_carry_tokens,
-             b_digit_correct,
-             b_digit_tokens) = accuracy_with_splits(
-                logits, target_ids, mask, H=cfg.H, W=cfg.W
-            )
-
-            init_train_loss += batch_loss * batch_tokens
-            init_train_tokens += batch_tokens
-            init_train_correct += b_total_correct
-            init_train_carry_correct += b_carry_correct
-            init_train_carry_tokens += b_carry_tokens
-            init_train_digit_correct += b_digit_correct
-            init_train_digit_tokens += b_digit_tokens
-
-            batch_acc = b_total_correct / max(b_total_tokens, 1)
-            pbar_init_train.set_postfix(loss=batch_loss, acc=batch_acc)
-
-    init_train_avg_loss = init_train_loss / max(init_train_tokens, 1)
-    init_train_avg_acc  = init_train_correct / max(init_train_tokens, 1)
-    init_train_carry_acc = (
-        init_train_carry_correct / init_train_carry_tokens
-        if init_train_carry_tokens > 0 else 0.0
-    )
-    init_train_digit_acc = (
-        init_train_digit_correct / init_train_digit_tokens
-        if init_train_digit_tokens > 0 else 0.0
-    )
-
-    # --- val set baseline ---
-    init_val_loss = 0.0
-    init_val_tokens = 0
-    init_val_correct = 0
-    init_val_carry_correct = 0
-    init_val_carry_tokens = 0
-    init_val_digit_correct = 0
-    init_val_digit_tokens = 0
-
-    pbar_init_val = tqdm(val_loader, desc="Epoch 0 [val, random]")
-    with torch.no_grad():
-        for batch in pbar_init_val:
-            input_ids  = batch["input_ids"].to(device)
-            target_ids = batch["target_ids"].to(device)
-            mask       = batch["mask"].to(device)
-
-            logits, _ = model(input_ids)
-
-            loss = masked_cross_entropy(logits, target_ids, mask)
-            batch_tokens = mask.sum().item()
-            batch_loss = loss.item()
-
-            (b_total_correct,
-             b_total_tokens,
-             b_carry_correct,
-             b_carry_tokens,
-             b_digit_correct,
-             b_digit_tokens) = accuracy_with_splits(
-                logits, target_ids, mask, H=cfg.H, W=cfg.W
-            )
-
-            init_val_loss += batch_loss * batch_tokens
-            init_val_tokens += batch_tokens
-            init_val_correct += b_total_correct
-            init_val_carry_correct += b_carry_correct
-            init_val_carry_tokens += b_carry_tokens
-            init_val_digit_correct += b_digit_correct
-            init_val_digit_tokens += b_digit_tokens
-
-            batch_acc = b_total_correct / max(b_total_tokens, 1)
-            pbar_init_val.set_postfix(loss=batch_loss, acc=batch_acc)
-
-    init_val_avg_loss = init_val_loss / max(init_val_tokens, 1)
-    init_val_avg_acc  = init_val_correct / max(init_val_tokens, 1)
-    init_val_carry_acc = (
-        init_val_carry_correct / init_val_carry_tokens
-        if init_val_carry_tokens > 0 else 0.0
-    )
-    init_val_digit_acc = (
-        init_val_digit_correct / init_val_digit_tokens
-        if init_val_digit_tokens > 0 else 0.0
-    )
-
-    print(
-        f"\nEpoch 0 (random model) "
-        f"| train loss/token: {init_train_avg_loss:.4f} "
-        f"| train acc(masked): {init_train_avg_acc:.4f} "
-        f"| train carry acc: {init_train_carry_acc:.4f} "
-        f"| train digit acc: {init_train_digit_acc:.4f}"
-    )
-    print(
-        f"Epoch 0 (random model) "
-        f"| val   loss/token: {init_val_avg_loss:.4f} "
-        f"| val   acc(masked): {init_val_avg_acc:.4f} "
-        f"| val   carry acc: {init_val_carry_acc:.4f} "
-        f"| val   digit acc: {init_val_digit_acc:.4f}"
-    )
-    print("=" * 80)
-
-    # ----- Training loop -----
-    for epoch in range(1, num_epochs + 1):
-        model.train()
-        total_loss = 0.0
-        total_tokens = 0
-        total_correct = 0
-        total_carry_correct = 0
-        total_carry_tokens = 0
-        total_digit_correct = 0
-        total_digit_tokens = 0
-
-        # tqdm over training loader
-        pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs} [train]")
-        for batch in pbar:
-            input_ids  = batch["input_ids"].to(device)   # (B, L)
-            target_ids = batch["target_ids"].to(device)  # (B, L)
-            mask       = batch["mask"].to(device)        # (B, L)
-
-            optimizer.zero_grad()
-            logits, _ = model(input_ids)                 # (B, L, V)
-
-            loss = masked_cross_entropy(logits, target_ids, mask)
-            loss.backward()
-            optimizer.step()
-
-            batch_tokens = mask.sum().item()
-            batch_loss = loss.item()
-
-            (b_total_correct,
-             b_total_tokens,
-             b_carry_correct,
-             b_carry_tokens,
-             b_digit_correct,
-             b_digit_tokens) = accuracy_with_splits(
-                logits, target_ids, mask, H=cfg.H, W=cfg.W
-            )
-
-            total_loss += batch_loss * batch_tokens
-            total_tokens += batch_tokens
-            total_correct += b_total_correct
-            total_carry_correct += b_carry_correct
-            total_carry_tokens += b_carry_tokens
-            total_digit_correct += b_digit_correct
-            total_digit_tokens += b_digit_tokens
-
-            batch_acc = b_total_correct / max(b_total_tokens, 1)
-            pbar.set_postfix(loss=batch_loss, acc=batch_acc)
-
-        avg_loss = total_loss / max(total_tokens, 1)
-        avg_acc  = total_correct / max(total_tokens, 1)
-        carry_acc = (
-            total_carry_correct / total_carry_tokens
-            if total_carry_tokens > 0 else 0.0
-        )
-        digit_acc = (
-            total_digit_correct / total_digit_tokens
-            if total_digit_tokens > 0 else 0.0
-        )
-
-        history["train_loss"].append(avg_loss)
-        history["train_acc"].append(avg_acc)
-        history["train_carry_acc"].append(carry_acc)
-        history["train_digit_acc"].append(digit_acc)
-
-        # ----- Validation -----
+        # history for later inspection / plotting
+        history = {
+            "train_loss": [],
+            "train_acc": [],
+            "train_carry_acc": [],
+            "train_digit_acc": [],
+            "val_loss": [],
+            "val_acc": [],
+            "val_carry_acc": [],
+            "val_digit_acc": [],
+        }
+        """
+        # ----- Epoch 0: evaluate random (untrained) model -----
         model.eval()
-        val_loss = 0.0
-        val_tokens = 0
-        val_correct = 0
-        val_carry_correct = 0
-        val_carry_tokens = 0
-        val_digit_correct = 0
-        val_digit_tokens = 0
 
-        pbar_val = tqdm(val_loader, desc=f"Epoch {epoch}/{num_epochs} [val] ")
+        # --- train set baseline ---
+        init_train_loss = 0.0
+        init_train_tokens = 0
+        init_train_correct = 0
+        init_train_carry_correct = 0
+        init_train_carry_tokens = 0
+        init_train_digit_correct = 0
+        init_train_digit_tokens = 0
+
+        pbar_init_train = tqdm(train_loader, desc="Epoch 0 [train, random]")
         with torch.no_grad():
-            for batch in pbar_val:
+            for batch in pbar_init_train:
                 input_ids  = batch["input_ids"].to(device)
                 target_ids = batch["target_ids"].to(device)
                 mask       = batch["mask"].to(device)
@@ -354,76 +183,264 @@ def main():
                 logits, _ = model(input_ids)
 
                 loss = masked_cross_entropy(logits, target_ids, mask)
+                batch_tokens = mask.sum().item()
+                batch_loss = loss.item()
+
+                (b_total_correct,
+                b_total_tokens,
+                b_carry_correct,
+                b_carry_tokens,
+                b_digit_correct,
+                b_digit_tokens) = accuracy_with_splits(
+                    logits, target_ids, mask, H=cfg.H, W=cfg.W
+                )
+
+                init_train_loss += batch_loss * batch_tokens
+                init_train_tokens += batch_tokens
+                init_train_correct += b_total_correct
+                init_train_carry_correct += b_carry_correct
+                init_train_carry_tokens += b_carry_tokens
+                init_train_digit_correct += b_digit_correct
+                init_train_digit_tokens += b_digit_tokens
+
+                batch_acc = b_total_correct / max(b_total_tokens, 1)
+                pbar_init_train.set_postfix(loss=batch_loss, acc=batch_acc)
+
+        init_train_avg_loss = init_train_loss / max(init_train_tokens, 1)
+        init_train_avg_acc  = init_train_correct / max(init_train_tokens, 1)
+        init_train_carry_acc = (
+            init_train_carry_correct / init_train_carry_tokens
+            if init_train_carry_tokens > 0 else 0.0
+        )
+        init_train_digit_acc = (
+            init_train_digit_correct / init_train_digit_tokens
+            if init_train_digit_tokens > 0 else 0.0
+        )
+
+        # --- val set baseline ---
+        init_val_loss = 0.0
+        init_val_tokens = 0
+        init_val_correct = 0
+        init_val_carry_correct = 0
+        init_val_carry_tokens = 0
+        init_val_digit_correct = 0
+        init_val_digit_tokens = 0
+
+        pbar_init_val = tqdm(val_loader, desc="Epoch 0 [val, random]")
+        with torch.no_grad():
+            for batch in pbar_init_val:
+                input_ids  = batch["input_ids"].to(device)
+                target_ids = batch["target_ids"].to(device)
+                mask       = batch["mask"].to(device)
+
+                logits, _ = model(input_ids)
+
+                loss = masked_cross_entropy(logits, target_ids, mask)
+                batch_tokens = mask.sum().item()
+                batch_loss = loss.item()
+
+                (b_total_correct,
+                b_total_tokens,
+                b_carry_correct,
+                b_carry_tokens,
+                b_digit_correct,
+                b_digit_tokens) = accuracy_with_splits(
+                    logits, target_ids, mask, H=cfg.H, W=cfg.W
+                )
+
+                init_val_loss += batch_loss * batch_tokens
+                init_val_tokens += batch_tokens
+                init_val_correct += b_total_correct
+                init_val_carry_correct += b_carry_correct
+                init_val_carry_tokens += b_carry_tokens
+                init_val_digit_correct += b_digit_correct
+                init_val_digit_tokens += b_digit_tokens
+
+                batch_acc = b_total_correct / max(b_total_tokens, 1)
+                pbar_init_val.set_postfix(loss=batch_loss, acc=batch_acc)
+
+        init_val_avg_loss = init_val_loss / max(init_val_tokens, 1)
+        init_val_avg_acc  = init_val_correct / max(init_val_tokens, 1)
+        init_val_carry_acc = (
+            init_val_carry_correct / init_val_carry_tokens
+            if init_val_carry_tokens > 0 else 0.0
+        )
+        init_val_digit_acc = (
+            init_val_digit_correct / init_val_digit_tokens
+            if init_val_digit_tokens > 0 else 0.0
+        )
+
+        print(
+            f"\nEpoch 0 (random model) "
+            f"| train loss/token: {init_train_avg_loss:.4f} "
+            f"| train acc(masked): {init_train_avg_acc:.4f} "
+            f"| train carry acc: {init_train_carry_acc:.4f} "
+            f"| train digit acc: {init_train_digit_acc:.4f}"
+        )
+        print(
+            f"Epoch 0 (random model) "
+            f"| val   loss/token: {init_val_avg_loss:.4f} "
+            f"| val   acc(masked): {init_val_avg_acc:.4f} "
+            f"| val   carry acc: {init_val_carry_acc:.4f} "
+            f"| val   digit acc: {init_val_digit_acc:.4f}"
+        )
+        print("=" * 80)
+        """
+        model.train()
+        # ----- Training loop -----
+        for epoch in range(1, num_epochs + 1):
+            model.train()
+            total_loss = 0.0
+            total_tokens = 0
+            total_correct = 0
+            total_carry_correct = 0
+            total_carry_tokens = 0
+            total_digit_correct = 0
+            total_digit_tokens = 0
+
+            # tqdm over training loader
+            pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs} [train]")
+            for batch in pbar:
+                input_ids  = batch["input_ids"].to(device)   # (B, L)
+                target_ids = batch["target_ids"].to(device)  # (B, L)
+                mask       = batch["mask"].to(device)        # (B, L)
+
+                optimizer.zero_grad()
+                logits, _ = model(input_ids)                 # (B, L, V)
+
+                loss = masked_cross_entropy(logits, target_ids, mask)
+                loss.backward()
+                optimizer.step()
 
                 batch_tokens = mask.sum().item()
                 batch_loss = loss.item()
 
                 (b_total_correct,
-                 b_total_tokens,
-                 b_carry_correct,
-                 b_carry_tokens,
-                 b_digit_correct,
-                 b_digit_tokens) = accuracy_with_splits(
+                b_total_tokens,
+                b_carry_correct,
+                b_carry_tokens,
+                b_digit_correct,
+                b_digit_tokens) = accuracy_with_splits(
                     logits, target_ids, mask, H=cfg.H, W=cfg.W
                 )
 
-                val_loss += batch_loss * batch_tokens
-                val_tokens += batch_tokens
-                val_correct += b_total_correct
-                val_carry_correct += b_carry_correct
-                val_carry_tokens += b_carry_tokens
-                val_digit_correct += b_digit_correct
-                val_digit_tokens += b_digit_tokens
+                total_loss += batch_loss * batch_tokens
+                total_tokens += batch_tokens
+                total_correct += b_total_correct
+                total_carry_correct += b_carry_correct
+                total_carry_tokens += b_carry_tokens
+                total_digit_correct += b_digit_correct
+                total_digit_tokens += b_digit_tokens
 
                 batch_acc = b_total_correct / max(b_total_tokens, 1)
-                pbar_val.set_postfix(loss=batch_loss, acc=batch_acc)
+                pbar.set_postfix(loss=batch_loss, acc=batch_acc)
 
-        val_avg_loss = val_loss / max(val_tokens, 1)
-        val_avg_acc  = val_correct / max(val_tokens, 1)
-        val_carry_acc = (
-            val_carry_correct / val_carry_tokens
-            if val_carry_tokens > 0 else 0.0
-        )
-        val_digit_acc = (
-            val_digit_correct / val_digit_tokens
-            if val_digit_tokens > 0 else 0.0
-        )
+            avg_loss = total_loss / max(total_tokens, 1)
+            avg_acc  = total_correct / max(total_tokens, 1)
+            carry_acc = (
+                total_carry_correct / total_carry_tokens
+                if total_carry_tokens > 0 else 0.0
+            )
+            digit_acc = (
+                total_digit_correct / total_digit_tokens
+                if total_digit_tokens > 0 else 0.0
+            )
 
-        history["val_loss"].append(val_avg_loss)
-        history["val_acc"].append(val_avg_acc)
-        history["val_carry_acc"].append(val_carry_acc)
-        history["val_digit_acc"].append(val_digit_acc)
+            history["train_loss"].append(avg_loss)
+            history["train_acc"].append(avg_acc)
+            history["train_carry_acc"].append(carry_acc)
+            history["train_digit_acc"].append(digit_acc)
 
-        print(
-            f"\nEpoch {epoch}/{num_epochs} "
-            f"| train loss/token: {avg_loss:.4f} "
-            f"| train acc(masked): {avg_acc:.4f} "
-            f"| train carry acc: {carry_acc:.4f} "
-            f"| train digit acc: {digit_acc:.4f}"
-        )
-        print(
-            f"Epoch {epoch}/{num_epochs} "
-            f"| val   loss/token: {val_avg_loss:.4f} "
-            f"| val   acc(masked): {val_avg_acc:.4f} "
-            f"| val   carry acc: {val_carry_acc:.4f} "
-            f"| val   digit acc: {val_digit_acc:.4f}"
-        )
-        print("-" * 80)
+            # ----- Validation -----
+            model.eval()
+            val_loss = 0.0
+            val_tokens = 0
+            val_correct = 0
+            val_carry_correct = 0
+            val_carry_tokens = 0
+            val_digit_correct = 0
+            val_digit_tokens = 0
 
-    # optional: print the whole history at the end
-    print("Training history:")
-    for e in range(num_epochs):
-        print(
-            f"Epoch {e+1}: "
-            f"train_loss={history['train_loss'][e]:.4f}, "
-            f"train_acc={history['train_acc'][e]:.4f}, "
-            f"train_carry_acc={history['train_carry_acc'][e]:.4f}, "
-            f"train_digit_acc={history['train_digit_acc'][e]:.4f}, "
-            f"val_loss={history['val_loss'][e]:.4f}, "
-            f"val_acc={history['val_acc'][e]:.4f}, "
-            f"val_carry_acc={history['val_carry_acc'][e]:.4f}, "
-            f"val_digit_acc={history['val_digit_acc'][e]:.4f}"
-        )
+            pbar_val = tqdm(val_loader, desc=f"Epoch {epoch}/{num_epochs} [val] ")
+            with torch.no_grad():
+                for batch in pbar_val:
+                    input_ids  = batch["input_ids"].to(device)
+                    target_ids = batch["target_ids"].to(device)
+                    mask       = batch["mask"].to(device)
+
+                    logits, _ = model(input_ids)
+
+                    loss = masked_cross_entropy(logits, target_ids, mask)
+
+                    batch_tokens = mask.sum().item()
+                    batch_loss = loss.item()
+
+                    (b_total_correct,
+                    b_total_tokens,
+                    b_carry_correct,
+                    b_carry_tokens,
+                    b_digit_correct,
+                    b_digit_tokens) = accuracy_with_splits(
+                        logits, target_ids, mask, H=cfg.H, W=cfg.W
+                    )
+
+                    val_loss += batch_loss * batch_tokens
+                    val_tokens += batch_tokens
+                    val_correct += b_total_correct
+                    val_carry_correct += b_carry_correct
+                    val_carry_tokens += b_carry_tokens
+                    val_digit_correct += b_digit_correct
+                    val_digit_tokens += b_digit_tokens
+
+                    batch_acc = b_total_correct / max(b_total_tokens, 1)
+                    pbar_val.set_postfix(loss=batch_loss, acc=batch_acc)
+
+            val_avg_loss = val_loss / max(val_tokens, 1)
+            val_avg_acc  = val_correct / max(val_tokens, 1)
+            val_carry_acc = (
+                val_carry_correct / val_carry_tokens
+                if val_carry_tokens > 0 else 0.0
+            )
+            val_digit_acc = (
+                val_digit_correct / val_digit_tokens
+                if val_digit_tokens > 0 else 0.0
+            )
+
+            history["val_loss"].append(val_avg_loss)
+            history["val_acc"].append(val_avg_acc)
+            history["val_carry_acc"].append(val_carry_acc)
+            history["val_digit_acc"].append(val_digit_acc)
+
+            print(
+                f"\nEpoch {epoch}/{num_epochs} "
+                f"| train loss/token: {avg_loss:.4f} "
+                f"| train acc(masked): {avg_acc:.4f} "
+                f"| train carry acc: {carry_acc:.4f} "
+                f"| train digit acc: {digit_acc:.4f}"
+            )
+            print(
+                f"Epoch {epoch}/{num_epochs} "
+                f"| val   loss/token: {val_avg_loss:.4f} "
+                f"| val   acc(masked): {val_avg_acc:.4f} "
+                f"| val   carry acc: {val_carry_acc:.4f} "
+                f"| val   digit acc: {val_digit_acc:.4f}"
+            )
+            print("-" * 80)
+
+        # optional: print the whole history at the end
+        print("Training history:")
+        for e in range(num_epochs):
+            print(
+                f"Epoch {e+1}: "
+                f"train_loss={history['train_loss'][e]:.4f}, "
+                f"train_acc={history['train_acc'][e]:.4f}, "
+                f"train_carry_acc={history['train_carry_acc'][e]:.4f}, "
+                f"train_digit_acc={history['train_digit_acc'][e]:.4f}, "
+                f"val_loss={history['val_loss'][e]:.4f}, "
+                f"val_acc={history['val_acc'][e]:.4f}, "
+                f"val_carry_acc={history['val_carry_acc'][e]:.4f}, "
+                f"val_digit_acc={history['val_digit_acc'][e]:.4f}"
+            )
 
 
 

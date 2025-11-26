@@ -6,8 +6,7 @@ import torch.nn.functional as F
 import math
 from typing import Optional, List, Tuple
 
-
-from src.models.positional_encodings import SinusoidalPositionalEncoding
+from src.models.positional_encodings import *
 
 
 class InspectableEncoderLayer(nn.Module):
@@ -102,13 +101,15 @@ class BlackboardTransformer(nn.Module):
         dim_feedforward: int = 512,
         max_len: int = 256,
         dropout: float = 0.1,
+        pos_enc: nn.Module = None
     ):
         super().__init__()
         self.vocab_size = vocab_size
         self.d_model = d_model
 
         self.token_emb = nn.Embedding(vocab_size, d_model)
-        self.pos_enc = SinusoidalPositionalEncoding(d_model, max_len=max_len)
+        self.pos_enc = pos_enc
+        self.nhead = nhead
 
         self.layers = nn.ModuleList([
             InspectableEncoderLayer(
@@ -140,9 +141,19 @@ class BlackboardTransformer(nn.Module):
                 element is a tensor of shape (B, n_heads, L, L) with attention
                 weights for that layer. If return_attn=False, this is None.
         """
+
         # 1) token embeddings + positional encodings
         x = self.token_emb(input_ids) * math.sqrt(self.d_model)  # (B, L, D)
-        x = self.pos_enc(x)
+        pos_bias = None
+        # Call it for sinusoidal PE, absolute 2D PE, not for relative PE
+        if isinstance(self.pos_enc, RelativePositionBias2D):
+            pos_bias = self.pos_enc().to(input_ids.device) 
+            B, L = input_ids.shape
+            pos_bias = pos_bias.unsqueeze(0).expand(B, -1, -1, -1)   # (B, n_heads, L, L)
+            pos_bias = pos_bias.reshape(B * self.nhead, L, L)  # (B*n_heads, L, L)
+        else:
+            x = self.pos_enc(x) 
+           
 
         attn_all_layers: Optional[List[torch.Tensor]] = [] if return_attn else None
 
@@ -151,7 +162,7 @@ class BlackboardTransformer(nn.Module):
             if return_attn:
                 x, attn = layer(
                     x,
-                    src_mask=None,
+                    src_mask=pos_bias,
                     src_key_padding_mask=src_key_padding_mask,
                     need_attn_weights=True,
                 )
@@ -159,7 +170,7 @@ class BlackboardTransformer(nn.Module):
             else:
                 x, _ = layer(
                     x,
-                    src_mask=None,
+                    src_mask=pos_bias,
                     src_key_padding_mask=src_key_padding_mask,
                     need_attn_weights=False,
                 )
@@ -167,9 +178,8 @@ class BlackboardTransformer(nn.Module):
         # 3) project to logits
         logits = self.output_proj(x)  # (B, L, vocab_size)
 
-        if return_attn:
-            return logits, attn_all_layers
-        return logits, None
+        return logits, attn_all_layers
+
 
 
 class COTTransformer(nn.Module):
