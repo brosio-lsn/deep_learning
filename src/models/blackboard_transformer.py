@@ -76,9 +76,12 @@ class InspectableEncoderLayer(nn.Module):
 
         if need_attn_weights and attn_weights is not None:
             # attn_weights: (B * n_heads, L, L) -> (B, n_heads, L, L)
-            B, L, _ = src.shape
-            n_heads = attn_weights.shape[0] // B
-            attn_weights = attn_weights.view(B, n_heads, L, L)
+            if attn_weights.dim() == 3:
+                B, L, _ = src.shape
+                n_heads = attn_weights.shape[0] // B
+                attn_weights = attn_weights.view(B, n_heads, L, L)
+            elif attn_weights.dim() == 4:
+                pass
             return x, attn_weights
 
         return x, None
