@@ -197,6 +197,8 @@ class COTTransformer(nn.Module):
         self.vocab_size = vocab_size
         self.d_model = d_model
 
+        self.nhead = nhead
+
         self.token_emb = nn.Embedding(vocab_size, d_model)
         self.pos_enc = SinusoidalPositionalEncoding(d_model, max_len=max_len)
 
@@ -215,7 +217,7 @@ class COTTransformer(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,                       # (B, L)
-        src_mask: torch.Tensor,
+        src_mask: torch.Tensor,  # (L, L)
         src_key_padding_mask: Optional[torch.Tensor] = None,  # (B, L) or None
         return_attn: bool = False,
     ) -> Tuple[torch.Tensor, Optional[List[torch.Tensor]]]:
@@ -237,12 +239,18 @@ class COTTransformer(nn.Module):
 
         attn_all_layers: Optional[List[torch.Tensor]] = [] if return_attn else None
 
+        mask = None
+        if src_mask is not None:
+            B, L = input_ids.shape
+            mask = src_mask.unsqueeze(0).unsqueeze(0).expand(B, self.nhead, -1, -1)   # (B, n_heads, L, L)
+            mask = mask.reshape(B * self.nhead, L, L)  # (B*n_heads, L, L)
+
         # 2) pass through each encoder layer
         for layer in self.layers:
             if return_attn:
                 x, attn = layer(
                     x,
-                    src_mask=src_mask,
+                    src_mask=mask,
                     src_key_padding_mask=src_key_padding_mask,
                     need_attn_weights=True,
                 )
@@ -250,7 +258,7 @@ class COTTransformer(nn.Module):
             else:
                 x, _ = layer(
                     x,
-                    src_mask=src_mask,
+                    src_mask=mask,
                     src_key_padding_mask=src_key_padding_mask,
                     need_attn_weights=False,
                 )

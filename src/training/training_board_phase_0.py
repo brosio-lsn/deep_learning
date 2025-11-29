@@ -10,7 +10,7 @@ from src.data.problems import generate_problems, generate_diversified_problems
 from src.data.board_dataset import BlackboardAdditionStepDataset
 from src.models.blackboard_transformer import BlackboardTransformer
 
-from src.data.cot_dataset import CoTAdditionDataset, COT_VOCAB_TOKENS
+from src.data.cot_dataset import CoTAdditionDataset, COT_VOCAB_TOKENS, ID2TOK
 from src.data.sampler import BucketBatchSampler
 from src.models.blackboard_transformer import COTTransformer
 from src.models.positional_encodings import *
@@ -446,13 +446,18 @@ def main():
 
 def main2():
 
+    def print_tokens(string: str, ids: torch.Tensor):
+        ids = ids.cpu()
+        s = [ID2TOK[id.item()] for id in ids]
+        print(f"{string} {s}")
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
 
     # ----- Configs -----
     cfg = BoardConfig(H=4, W=5, n_digits=3)
 
-    n_train_problems = 40000
+    n_train_problems = 40_000
     n_val_problems = 2000
     batch_size = 64
     num_epochs = 5
@@ -466,7 +471,10 @@ def main2():
     val_ds   = CoTAdditionDataset(val_problems)
 
     train_loader = DataLoader(train_ds, batch_sampler=BucketBatchSampler(train_ds, batch_size=batch_size, shuffle=True))
-    val_loader   = DataLoader(val_ds,  batch_sampler=BucketBatchSampler(train_ds, batch_size=batch_size, shuffle=False))
+    val_loader = DataLoader(val_ds, batch_sampler=BucketBatchSampler(val_ds, batch_size=batch_size, shuffle=True))
+    
+    num_training_batches = len(train_loader)
+    num_val_batches = len(val_loader)
 
     # ----- Model -----
     model = COTTransformer(
@@ -499,9 +507,9 @@ def main2():
         "val_digit_acc": [],
     }
 
-
+    print(f'Starting training CoT transformer ...')
     for epoch in range(1, num_epochs + 1):
-
+        
         model.train()
 
         total_loss = 0.0
@@ -515,13 +523,14 @@ def main2():
         # tqdm over training loader
         pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs} [train]")
 
-        for batch in pbar:
+        for i, batch in enumerate(pbar):
             
             input_ids  = batch["input_ids"].to(device)   # (B,  L_prefix + L_step, ) 
             target_ids = batch["label_ids"].to(device)  # (B, L_prefix + L_step,)
             loss_mask = batch["loss_mask"].to(device)   # (B, L_prefix + L_step)
             attn_mask = batch["attn_mask"][0].to(device) # one is enough grouping samples in a batch that correspond to same step
-
+            digit_positions =  batch["digit_pos"].to(device)   #(B,)
+            carry_positions = batch["carry_pos"].to(device) #(B,)
 
             optimizer.zero_grad()
             logits, _ = model(input_ids, src_mask=attn_mask) # (B, L, V)
@@ -530,23 +539,21 @@ def main2():
             loss.backward()
             optimizer.step()
 
-            batch_tokens = mask.sum().item()
+            batch_tokens = loss_mask.sum().item()
             batch_loss = loss.item()
 
             pred_ids = logits.argmax(dim=-1)         # (B, L)
             correct = (pred_ids == target_ids)       # (B, L) bool
 
-            b_total_correct = (correct & mask).sum().item()
+            b_total_correct = (correct & loss_mask).sum().item()
 
-            indices = mask[0].nonzero(as_tuple=True)[0]
+            digit_pos = digit_positions[0].item()
+            carry_pos = carry_positions[0].item()
 
-            digit_pos = indices[0] 
-            carry_pos = indices[1]
-
-            digit_mask = torch.zeros_like(mask).bool()
+            digit_mask = torch.zeros_like(loss_mask).bool()
             digit_mask[:, digit_pos] = True
 
-            carry_mask = torch.zeros_like(mask).bool()
+            carry_mask = torch.zeros_like(loss_mask).bool()
             carry_mask[:, carry_pos] = True
 
             b_digit_correct = (correct & digit_mask).sum().item()
@@ -554,7 +561,6 @@ def main2():
 
             b_carry_correct = (correct & carry_mask).sum().item()
             b_carry_tokens  = carry_mask.sum().item()
-
 
             total_loss += batch_loss * batch_tokens
             total_tokens += batch_tokens
@@ -565,7 +571,22 @@ def main2():
             total_digit_tokens += b_digit_tokens
 
             batch_acc = b_total_correct / max(batch_tokens, 1)
-            pbar.set_postfix(loss=batch_loss, acc=batch_accc)
+            pbar.set_postfix(loss=batch_loss, acc=batch_acc)
+
+            #print every 10% of the batches
+            if (i + 1) % (num_training_batches // 10) == 0:
+                print(f'Training / Epoch: {epoch} / Batch: {i+1} \n')
+                print('-' * 100)
+                print_tokens("Input IDS of first element of the batch: ", input_ids[0])
+                print_tokens("Target IDS of first element of the batch: ", target_ids[0])
+                print_tokens("Predicted IDS of first element of the batch: ", pred_ids[0])
+                print('Digit:')
+                print('Pred: ', ID2TOK[pred_ids[0][digit_pos].item()])
+                print('Target: ', ID2TOK[target_ids[0][digit_pos].item()])
+                print('Carry:')
+                print('Pred: ', ID2TOK[pred_ids[0][carry_pos].item()])
+                print('Target: ', ID2TOK[target_ids[0][carry_pos].item()])
+                print('-' * 100)
         
         avg_loss = total_loss / max(total_tokens, 1)
         avg_acc  = total_correct / max(total_tokens, 1)
@@ -596,37 +617,33 @@ def main2():
 
         pbar_val = tqdm(val_loader, desc=f"Epoch {epoch}/{num_epochs} [val] ")
         with torch.no_grad():
-            for batch in pbar_val:
+            for i, batch in enumerate(pbar_val):
                 input_ids  = batch["input_ids"].to(device)   # (B,  L_prefix + L_step, ) 
                 target_ids = batch["label_ids"].to(device)  # (B, L_prefix + L_step,)
                 loss_mask = batch["loss_mask"].to(device)   # (B, L_prefix + L_step)
                 attn_mask = batch["attn_mask"][0].to(device) # one is enough grouping samples in a batch that correspond to same step
+                digit_positions =  batch["digit_pos"].to(device)   #(B,)
+                carry_positions = batch["carry_pos"].to(device) #(B,)
 
-
-                optimizer.zero_grad()
                 logits, _ = model(input_ids, src_mask=attn_mask) # (B, L, V)
 
                 loss = masked_cross_entropy(logits, target_ids, loss_mask)
-                loss.backward()
-                optimizer.step()
-
-                batch_tokens = mask.sum().item()
+ 
+                batch_tokens = loss_mask.sum().item()
                 batch_loss = loss.item()
 
                 pred_ids = logits.argmax(dim=-1)         # (B, L)
                 correct = (pred_ids == target_ids)       # (B, L) bool
 
-                b_total_correct = (correct & mask).sum().item()
+                b_total_correct = (correct & loss_mask).sum().item()
 
-                indices = mask[0].nonzero(as_tuple=True)[0]
+                digit_pos = digit_positions[0].item()
+                carry_pos = carry_positions[0].item()
 
-                digit_pos = indices[0] 
-                carry_pos = indices[1]
-
-                digit_mask = torch.zeros_like(mask).bool()
+                digit_mask = torch.zeros_like(loss_mask).bool()
                 digit_mask[:, digit_pos] = True
 
-                carry_mask = torch.zeros_like(mask).bool()
+                carry_mask = torch.zeros_like(loss_mask).bool()
                 carry_mask[:, carry_pos] = True
 
                 b_digit_correct = (correct & digit_mask).sum().item()
@@ -634,7 +651,6 @@ def main2():
 
                 b_carry_correct = (correct & carry_mask).sum().item()
                 b_carry_tokens  = carry_mask.sum().item()
-
 
                 val_loss += batch_loss * batch_tokens
                 val_tokens += batch_tokens
@@ -644,8 +660,22 @@ def main2():
                 val_digit_correct += b_digit_correct
                 val_digit_tokens += b_digit_tokens
 
-                batch_acc = b_total_correct / max(b_total_tokens, 1)
+                batch_acc = b_total_correct / max(batch_tokens, 1)
                 pbar_val.set_postfix(loss=batch_loss, acc=batch_acc)
+
+                if (i + 1) % (num_val_batches // 10) == 0:
+                    print(f'Validation/  Batch: {i+1} \n')
+                    print('-' * 100)
+                    print_tokens("Input IDS of first element of the batch: ", input_ids[0])
+                    print_tokens("Target IDS of first element of the batch: ", target_ids[0])
+                    print_tokens("Predicted IDS of first element of the batch: ", pred_ids[0])
+                    print('Digit:')
+                    print('Pred: ', ID2TOK[pred_ids[0][digit_pos].item()])
+                    print('Target: ', ID2TOK[target_ids[0][digit_pos].item()])
+                    print('Carry:')
+                    print('Pred: ', ID2TOK[pred_ids[0][carry_pos].item()])
+                    print('Target: ', ID2TOK[target_ids[0][carry_pos].item()])
+                    print('-' * 100)
 
         val_avg_loss = val_loss / max(val_tokens, 1)
         val_avg_acc  = val_correct / max(val_tokens, 1)
@@ -697,5 +727,5 @@ def main2():
 
 
 if __name__ == "__main__":
-    main()
-   #main2()
+   #main()
+   main2()

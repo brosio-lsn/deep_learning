@@ -43,7 +43,7 @@ def encode_cot_full(problem: AdditionProblem) -> Tuple[List[int], List[bool]]:
 
     Sequence format, e.g. (with leading zeros to match fixed-width grid):
 
-      Input : 0 1 1 2 + 0 2 3 5 .
+      Input :  1 1 2 + 2 3 5 .
       Step 1 : 2 + 5 + 0 = 7 , carry 0 .
       Step 2 : 1 + 3 + 0 = 4 , carry 0 .
       Step 3 : 1 + 2 + 0 = 3 , carry 0 .
@@ -131,13 +131,18 @@ def encode_cot_full(problem: AdditionProblem) -> Tuple[List[int], List[bool]]:
 
 def build_block_mask(seq_len: int, this_step_start: int):
     #avoid tokens from the same current step to attend to each other
-    mask = torch.zeros((seq_len, seq_len))
+    mask = torch.ones((seq_len, seq_len))
     for q in range(this_step_start, seq_len):
         for k in range(this_step_start, seq_len):
             if k != q:                     # allow self-attention
-                mask[q, k] = float("-inf")
-    return mask
+                mask[q, k] = 0
+    return mask.bool()
 
+
+def build_decoder_mask(seq_len: int):
+    mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1)  # 1 above diagonal
+    mask = mask.masked_fill(mask == 1, float("-inf"))
+    return mask
 
 
 # ---------------------------------------------------------------------------
@@ -180,66 +185,53 @@ class CoTAdditionDataset(Dataset):
         return len(self.problems) * self.n_steps
 
     def __getitem__(self, idx: int):
-
         """
-        # Map global idx to (problem_idx, step_idx)
         problem_idx = idx // self.n_steps
-        step_idx = idx % self.n_steps  # 0 .. n_digits-1
+        step_idx = idx % self.n_steps  # 0..n_steps-1 
 
-        problem = self.problems[problem_idx]
-        token_ids, mask_full = encode_cot_full(problem)  # length L
+        token_ids, mask_full = self.encodings[problem_idx]  # length L full CoT
 
-        # --- Find all 'Step' token positions (starts of steps) ---
+        # Find all 'Step' starts
         step_positions = [i for i, tok_id in enumerate(token_ids)
-                          if ID2TOK[tok_id] == "Step"]
+                        if ID2TOK[tok_id] == "Step"]
 
-        assert len(step_positions) == self.n_steps, "Expected one 'Step' per column."
+        # Range for Input
+        input_end = step_positions[0]
 
-        # This step's 'Step' token index:
+        # Range for all completed steps (including this one)
         this_step_start = step_positions[step_idx]
 
-        # Prefix up to previous step: tokens before this 'Step'
-        # For step 0 (Step1), this is just the Input line.
-        prefix_end = this_step_start  # exclusive
-        prefix_token_ids = token_ids[:prefix_end]
-
-        # --- Identify supervised positions (result & carry) for this step ---
         supervised_positions = [i for i, m in enumerate(mask_full) if m]
-        # 2 supervised tokens per step: (result_digit, carry_digit)
         digit_pos = supervised_positions[2 * step_idx]
         carry_pos = supervised_positions[2 * step_idx + 1]
+        # Full sequence up to this step
 
-        # --- Full sequence up to and including this step's carry digit ---
-        step_end = carry_pos  # inclusive index
-        full_until_step = token_ids[:step_end + 1]
+        labels = token_ids[:carry_pos+2]  # NOT shifted
 
-        # Target is shifted version (standard next-token prediction)
-        target_ids = full_until_step[1:]
+        inputs =  labels.copy()
+        inputs[this_step_start:] = [VOCAB["PAD"]] * (len(inputs) - this_step_start)
+        seq_len = len(labels)
 
-        # Build target mask: True only where the *target* token is this step's
-        # result digit or carry digit. A target position j corresponds to
-        # full-sequence index i = j+1.
-        mask_tgt_list: List[bool] = []
-        for j in range(len(target_ids)):
-            full_idx = j + 1  # index in full_until_step / token_ids
-            if full_idx == digit_pos or full_idx == carry_pos:
-                mask_tgt_list.append(True)
-            else:
-                mask_tgt_list.append(False)
+        # Build loss mask aligned with labels
         
-
-        attn_mask = build_block_mask(seq_ids, this_step_start)
-
-        # Input is prefix only (no tokens from this step)
-        input_ids_t = torch.tensor(prefix_token_ids, dtype=torch.long)
-        target_ids_t = torch.tensor(target_ids, dtype=torch.long)
-        mask_tgt_t = torch.tensor(mask_tgt_list, dtype=torch.bool)
+        loss_mask = [False] * seq_len
+        for j in range(seq_len):
+            if j == digit_pos or j == carry_pos:
+                loss_mask[j] = True
+        loss_mask = [True] * seq_len
+        # Build attention mask
+        attn_mask = build_block_mask(seq_len, this_step_start)
 
         return {
-            "input_ids":  input_ids_t,   # (L_prefix,)
-            "target_ids": target_ids_t,  # (L_step-1,)
-            "mask":       mask_tgt_t,    # (L_step-1,), exactly 2 True entries
+            "input_ids": torch.tensor(inputs, dtype=torch.long), # (L_prefix + L_step, ) # real ids for prefix tokens, PAD IDS for the current step tokens
+            "label_ids": torch.tensor(labels, dtype=torch.long), # (L_prefix + L_step, ) # all real ids
+            "loss_mask": torch.tensor(loss_mask, dtype=torch.bool), # (L_prefix + L_step, ) # only true for resultig digit and carry of the current step
+            "attn_mask": attn_mask,   # (L_prefix + L_step, L_prefix + L_step) float tensor with -inf for positions a token cannot attend
+            "digit_pos": digit_pos,
+            "carry_pos": carry_pos,
+            "this_step_start": this_step_start
         }
+
         """
 
         problem_idx = idx // self.n_steps
@@ -262,24 +254,27 @@ class CoTAdditionDataset(Dataset):
         carry_pos = supervised_positions[2 * step_idx + 1]
         # Full sequence up to this step
 
-        labels = token_ids[:carry_pos+1]  # NOT shifted
+        labels = token_ids[:carry_pos+2] 
         inputs =  labels.copy()
-        inputs[this_step_start:] = VOCAB["PAD"]
-        seq_len = len(labels)
+
+        # shifts for decoder
+        labels = labels[1:] 
+        inputs = inputs[:-1]
+
+        seq_len = len(inputs)
 
         # Build loss mask aligned with labels
-        loss_mask = [False] * seq_len
-        for j in range(seq_len):
-            if j == digit_pos or j == carry_pos:
-                loss_mask[j] = True
-
+        loss_mask = [True] * seq_len
+        #loss_mask[this_step_start:] = [True] * (seq_len - this_step_start)
         # Build attention mask
-        attn_mask = build_block_mask(seq_len, this_step_start)
+        attn_mask = build_decoder_mask(seq_len)
 
         return {
-            "input_ids": torch.tensor(inputs, dtype=torch.long), # (L_prefix + L_step, ) # real ids for prefix tokens, PAD IDS for the current step tokens
-            "label_ids": torch.tensor(labels, dtype=torch.long), # (L_prefix + L_step, ) # all real ids
-            "loss_mask": torch.tensor(loss_mask, dtype=torch.bool), # (L_prefix + L_step, ) # only true for resultig digit and carry of the current step
+            "input_ids": torch.tensor(inputs, dtype=torch.long), # (L_prefix + L_step, ) # all real ids (without last one)
+            "label_ids": torch.tensor(labels, dtype=torch.long), # (L_prefix + L_step, ) # all real ids (without first one)
+            "loss_mask": torch.tensor(loss_mask, dtype=torch.bool), # (L_prefix + L_step, ) # only true for current step
             "attn_mask": attn_mask,   # (L_prefix + L_step, L_prefix + L_step) float tensor with -inf for positions a token cannot attend
+            "digit_pos": digit_pos -  1,
+            "carry_pos": carry_pos - 1,
             "this_step_start": this_step_start
         }
