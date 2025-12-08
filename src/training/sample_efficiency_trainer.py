@@ -275,7 +275,7 @@ def main():
     plt.title("Setting 1: sample size vs accuracy (3-digit)")
     plt.grid(True)
     plt.legend()
-    plt.savefig("setting1_sample_efficiency.png")
+    plt.savefig("/cluster/project/infk/krause/wnanadavies/deep_learning/plots/setting1_sample_efficiency.png")
     plt.close()
 
     # ----------------------------------------------------------------------
@@ -362,7 +362,7 @@ def main():
     plt.title("Setting 2: position split vs accuracy (10-digit)")
     plt.grid(True)
     plt.legend()
-    plt.savefig("setting2_position_split_10digit.png")
+    plt.savefig("/cluster/project/infk/krause/wnanadavies/deep_learning/plots/setting2_position_split_10digit.png")
     plt.close()
 
         # ----------------------------------------------------------------------

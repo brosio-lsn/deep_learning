@@ -14,9 +14,8 @@ from src.data.addition_algo import number_to_digits
 # ---------------------------------------------------------------------------
 
 COT_VOCAB_TOKENS: List[str] = [
-    "Input", "Step", "Output", "carry",
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
-    "+", "=", ".", ",", ":", "PAD"
+    "+", "=", ",", "PAD"
 ]
 
 VOCAB = {tok: i for i, tok in enumerate(COT_VOCAB_TOKENS)}
@@ -43,11 +42,11 @@ def encode_cot_full(problem: AdditionProblem) -> Tuple[List[int], List[bool]]:
 
     Sequence format, e.g. (with leading zeros to match fixed-width grid):
 
-      Input :  1 1 2 + 2 3 5 .
-      Step 1 : 2 + 5 + 0 = 7 , carry 0 .
-      Step 2 : 1 + 3 + 0 = 4 , carry 0 .
-      Step 3 : 1 + 2 + 0 = 3 , carry 0 .
-      Output : 0 3 4 7 .
+      1 1 2 + 2 3 5
+      2 + 5 + 0 = 7 , 0 
+      1 + 3 + 0 = 4 , 0 
+      1 + 2 + 0 = 3 , 0 
+
 
     mask[i] is True on the '7' and '0' in Step1, '4' and '0' in Step2, etc.
     """
@@ -73,14 +72,11 @@ def encode_cot_full(problem: AdditionProblem) -> Tuple[List[int], List[bool]]:
     # ---- Input line ----
     # "Input : <n_digits digits of top> + <n_digits digits of bottom> ."
     # Use leading zeros, most-significant digit first (reverse of number_to_digits).
-    add("Input")
-    add(":")
     for d in reversed(top_digits):
         add(str(d))
     add("+")
     for d in reversed(bot_digits):
         add(str(d))
-    add(".")
 
     # ---- Per-column steps (least-significant column is Step 1) ----
     carry = 0
@@ -93,10 +89,7 @@ def encode_cot_full(problem: AdditionProblem) -> Tuple[List[int], List[bool]]:
         cout = column_sum // base
         carry = cout
 
-        # "Step k : a + b + cin = s , carry cout ."
-        add("Step")
-        add(str(step_idx + 1))
-        add(":")
+        # "a + b + cin = s , cout"
         add(str(a))
         add("+")
         add(str(b))
@@ -106,11 +99,10 @@ def encode_cot_full(problem: AdditionProblem) -> Tuple[List[int], List[bool]]:
         # result digit token (supervised)
         add(str(s), supervise=True)
         add(",")
-        add("carry")
-        # carry digit token (supervised)
         add(str(cout), supervise=True)
-        add(".")
 
+
+    """
     # ---- Final output line ----
     # We do NOT supervise these digits here (already supervised per column).
     out_val = top_val + bot_val
@@ -123,6 +115,7 @@ def encode_cot_full(problem: AdditionProblem) -> Tuple[List[int], List[bool]]:
     for d in out_digits:
         add(str(d), supervise=False)
     add(".")
+    """
 
     # Map tokens to ids
     token_ids = [_encode_token(t) for t in tokens]
@@ -265,6 +258,9 @@ class CoTAdditionDataset(Dataset):
 
         # Build loss mask aligned with labels
         loss_mask = [True] * seq_len
+        # we do not care about prompt
+        input_len = self.cfg.n_digits * 2 + 1 
+        loss_mask[:input_len] = [False] * input_len
         #loss_mask[this_step_start:] = [True] * (seq_len - this_step_start)
         # Build attention mask
         attn_mask = build_decoder_mask(seq_len)
