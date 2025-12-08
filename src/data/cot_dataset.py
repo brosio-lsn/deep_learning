@@ -176,6 +176,7 @@ class CoTAdditionDataset(Dataset):
 
     def __len__(self) -> int:
         return len(self.problems) * self.n_steps
+        #return len(self.problems)
 
     def __getitem__(self, idx: int):
         """
@@ -184,63 +185,13 @@ class CoTAdditionDataset(Dataset):
 
         token_ids, mask_full = self.encodings[problem_idx]  # length L full CoT
 
-        # Find all 'Step' starts
-        step_positions = [i for i, tok_id in enumerate(token_ids)
-                        if ID2TOK[tok_id] == "Step"]
+        # Find all ',' starts
+        comma_positions = [i for i, tok_id in enumerate(token_ids)
+                        if ID2TOK[tok_id] == ","]
 
-        # Range for Input
-        input_end = step_positions[0]
-
+  
         # Range for all completed steps (including this one)
-        this_step_start = step_positions[step_idx]
-
-        supervised_positions = [i for i, m in enumerate(mask_full) if m]
-        digit_pos = supervised_positions[2 * step_idx]
-        carry_pos = supervised_positions[2 * step_idx + 1]
-        # Full sequence up to this step
-
-        labels = token_ids[:carry_pos+2]  # NOT shifted
-
-        inputs =  labels.copy()
-        inputs[this_step_start:] = [VOCAB["PAD"]] * (len(inputs) - this_step_start)
-        seq_len = len(labels)
-
-        # Build loss mask aligned with labels
-        
-        loss_mask = [False] * seq_len
-        for j in range(seq_len):
-            if j == digit_pos or j == carry_pos:
-                loss_mask[j] = True
-        loss_mask = [True] * seq_len
-        # Build attention mask
-        attn_mask = build_block_mask(seq_len, this_step_start)
-
-        return {
-            "input_ids": torch.tensor(inputs, dtype=torch.long), # (L_prefix + L_step, ) # real ids for prefix tokens, PAD IDS for the current step tokens
-            "label_ids": torch.tensor(labels, dtype=torch.long), # (L_prefix + L_step, ) # all real ids
-            "loss_mask": torch.tensor(loss_mask, dtype=torch.bool), # (L_prefix + L_step, ) # only true for resultig digit and carry of the current step
-            "attn_mask": attn_mask,   # (L_prefix + L_step, L_prefix + L_step) float tensor with -inf for positions a token cannot attend
-            "digit_pos": digit_pos,
-            "carry_pos": carry_pos,
-            "this_step_start": this_step_start
-        }
-
-        """
-
-        problem_idx = idx // self.n_steps
-        step_idx = idx % self.n_steps  # 0..n_steps-1 
-
-        token_ids, mask_full = self.encodings[problem_idx]  # length L full CoT
-
-        # Find all 'Step' starts
-        step_positions = [i for i, tok_id in enumerate(token_ids)
-                        if ID2TOK[tok_id] == "Step"]
-
-        # Range for Input
-        input_end = step_positions[0]
-
-        # Range for all completed steps (including this one)
-        this_step_start = step_positions[step_idx]
+        comma_position = comma_positions[step_idx]
 
         supervised_positions = [i for i, m in enumerate(mask_full) if m]
         digit_pos = supervised_positions[2 * step_idx]
@@ -261,6 +212,45 @@ class CoTAdditionDataset(Dataset):
         # we do not care about prompt
         input_len = self.cfg.n_digits * 2 + 1 
         loss_mask[:input_len] = [False] * input_len
+        #loss_mask[this_step_start:] = [True] * (seq_len - this_step_start)
+        # Build attention mask
+        attn_mask = build_decoder_mask(seq_len)
+
+        return {
+            "input_ids": torch.tensor(inputs, dtype=torch.long), # (L_prefix + L_step, ) # all real ids (without last one)
+            "label_ids": torch.tensor(labels, dtype=torch.long), # (L_prefix + L_step, ) # all real ids (without first one)
+            "loss_mask": torch.tensor(loss_mask, dtype=torch.bool), # (L_prefix + L_step, ) # only true for current step
+            "attn_mask": attn_mask,   # (L_prefix + L_step, L_prefix + L_step) float tensor with -inf for positions a token cannot attend
+            "digit_pos": digit_pos -  1,
+            "carry_pos": carry_pos - 1,
+            "this_step_start": this_step_start
+        }
+        """
+        problem_idx = idx // self.n_steps
+        step_idx = idx % self.n_steps  # 0..n_steps-1 
+
+        token_ids, mask_full = self.encodings[problem_idx]  # length L full CoT
+
+        comma_positions = [i for i, tok_id in enumerate(token_ids)
+                        if ID2TOK[tok_id] == ","]
+
+        # Range for all completed steps (including this one)
+        comma_position = comma_positions[step_idx]
+        digit_pos = comma_position - 1
+        carry_pos = comma_position + 1
+        this_step_start = comma_position - 7
+
+        token_ids = token_ids[:(carry_pos + 1)]
+        # shifts for decoder
+        labels = token_ids[1:] 
+        inputs = token_ids[:-1]
+
+        seq_len = len(inputs)
+
+        # Build loss mask aligned with labels
+        loss_mask = [False] * seq_len
+        # we do not care about prompt
+        loss_mask[this_step_start:] = [True] * (seq_len - this_step_start)
         #loss_mask[this_step_start:] = [True] * (seq_len - this_step_start)
         # Build attention mask
         attn_mask = build_decoder_mask(seq_len)
