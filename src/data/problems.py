@@ -4,11 +4,16 @@ from typing import List
 import numpy as np
 
 from src.data.addition_algo import BoardConfig, sample_operands, number_to_digits
-
+from src.data.subtraction_algo import sample_operands as sample_subtraction_operands
 
 @dataclass
 class AdditionProblem:
     operands: np.ndarray  # shape (n_addends,)
+    cfg: BoardConfig
+
+@dataclass
+class SubtractionProblem:
+    operands: np.ndarray
     cfg: BoardConfig
 
 
@@ -21,6 +26,18 @@ def generate_problems(cfg: BoardConfig, n: int, seed: int) -> List[AdditionProbl
     for _ in range(n):
         xs = sample_operands(cfg, rng)
         problems.append(AdditionProblem(xs, cfg))
+    return problems
+
+def generate_subtraction_problems(
+    cfg: BoardConfig,
+    n: int,
+    seed: int,
+) -> List[SubtractionProblem]:
+    rng = np.random.default_rng(seed)
+    problems: List[SubtractionProblem] = []
+    for _ in range(n):
+        xs = sample_subtraction_operands(cfg, rng)
+        problems.append(SubtractionProblem(xs, cfg))
     return problems
 
 
