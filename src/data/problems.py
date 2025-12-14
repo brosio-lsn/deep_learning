@@ -5,6 +5,7 @@ import numpy as np
 
 from src.data.addition_algo import BoardConfig, sample_operands, number_to_digits
 from src.data.subtraction_algo import sample_operands as sample_subtraction_operands
+from src.data.multi_addition_algo import sample_multi_operands
 
 @dataclass
 class AdditionProblem:
@@ -13,6 +14,11 @@ class AdditionProblem:
 
 @dataclass
 class SubtractionProblem:
+    operands: np.ndarray
+    cfg: BoardConfig
+
+@dataclass
+class MultiAdditionProblem:
     operands: np.ndarray
     cfg: BoardConfig
 
@@ -38,6 +44,18 @@ def generate_subtraction_problems(
     for _ in range(n):
         xs = sample_subtraction_operands(cfg, rng)
         problems.append(SubtractionProblem(xs, cfg))
+    return problems
+
+def generate_multi_addition_problems(
+    cfg: BoardConfig,
+    n: int,
+    seed: int,
+) -> List[MultiAdditionProblem]:
+    rng = np.random.default_rng(seed)
+    problems: List[MultiAdditionProblem] = []
+    for _ in range(n):
+        xs = sample_multi_operands(cfg, rng)
+        problems.append(MultiAdditionProblem(xs, cfg))
     return problems
 
 
