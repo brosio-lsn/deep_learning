@@ -94,7 +94,7 @@ def build_initial_board(cfg: BoardConfig, xs: np.ndarray) -> np.ndarray:
     return board
 
 
-def generate_trajectory(
+def generate_trajectory_variant_A(
     cfg: BoardConfig,
     xs: np.ndarray
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
@@ -150,7 +150,7 @@ def generate_trajectory(
         next_col = col - 1
         if next_col >= 0:
             if carry == 0:
-                S_next[cfg.carry_row, next_col] = BLANK_TOKEN
+                S_next[cfg.carry_row, next_col] = BLANK_TOKEN # -> change to 0 i think
             else:
                 S_next[cfg.carry_row, next_col] = carry
             M_t[cfg.carry_row, next_col] = True
@@ -161,3 +161,62 @@ def generate_trajectory(
         S_t = S_next
 
     return S_seq, M_seq
+
+
+def generate_trajectory_variant_B(
+    cfg: BoardConfig,
+    xs: np.ndarray
+) -> Tuple[List[np.ndarray], List[np.ndarray]]:
+ """
+    Generate a trajectory (S_seq, M_seq) for no-masking training (variant B).
+"""
+
+    S_seq: List[np.ndarray] = []
+    M_seq: List[np.ndarray] = []
+
+    S_t = build_initial_board(cfg, xs)
+    S_seq.append(S_t.copy())
+
+    carry = 0
+    col_end = cfg.W - 1
+    # leftmost digit column (not strictly needed below but kept for clarity)
+    col_start = col_end - (cfg.n_digits - 1)
+
+    # One step per digit column, starting from the units on the right.
+    for step in range(cfg.n_digits):
+        col = col_end - step  # current digit column, moving left
+
+        # Read current column digits.
+        column_sum = carry
+        for row in [cfg.top_row, cfg.bottom_row]:
+            d = S_t[row, col]
+            if d != BLANK_TOKEN:
+                column_sum += int(d)
+
+        new_digit = column_sum % cfg.base
+        carry     = column_sum // cfg.base
+
+        # Prepare next board and mask.
+        S_next = S_t.copy()
+        M_t = np.ones_like(S_t, dtype=bool)
+
+        # Write result digit in result row, current column.
+        S_next[cfg.result_row, col] = new_digit
+
+        # Always supervise the carry cell one column to the left:
+        # - BLANK_TOKEN if there is no carry
+        # - a digit token if there is a carry.
+        next_col = col - 1
+        if next_col >= 0:
+            if carry == 0:
+                S_next[cfg.carry_row, next_col] = 0 # previously BLANK_TOKEN
+            else:
+                S_next[cfg.carry_row, next_col] = carry
+
+        S_seq.append(S_next)
+        M_seq.append(M_t)
+
+        S_t = S_next
+
+    return S_seq, M_seq
+

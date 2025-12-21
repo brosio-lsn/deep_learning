@@ -3,8 +3,8 @@ from typing import Dict, List
 import torch
 from torch.utils.data import Dataset
 
-from src.data.addition_algo import BoardConfig, generate_trajectory as generate_addition_trajectory
-from src.data.subtraction_algo import generate_trajectory as generate_subtraction_trajectory
+from src.data.addition_algo import BoardConfig, generate_trajectory_variant_A as generate_addition_trajectory
+from src.data.subtraction_algo import generate_trajectory_variant_A as generate_subtraction_trajectory
 from src.data.multi_addition_algo import generate_multi_trajectory
 from src.data.problems import AdditionProblem, SubtractionProblem, MultiAdditionProblem
 

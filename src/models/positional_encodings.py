@@ -145,6 +145,8 @@ class RelativePositionBias2D(nn.Module):
         delta_x = row.unsqueeze(1) - row.unsqueeze(0)   # (L, L)
         delta_y = col.unsqueeze(1) - col.unsqueeze(0)   # (L, L)
 
+        #result[i, j] = row[i, 0] - row[0, j]
+
         # Shift to be >= 0 for embedding lookup
         delta_x_index = delta_x + (H - 1)  # in [0, 2H-2]
         delta_y_index = delta_y + (W - 1)  # in [0, 2W-2]

@@ -199,8 +199,8 @@ def main():
     # Shared model hyperparameters
     # -------------------------------
     d_model = 128
-    n_heads = 4
-    num_layers = 3
+    n_heads = 1
+    num_layers = 4
     dim_feedforward = 512
     dropout = 0.1
     batch_size = 128
@@ -226,7 +226,7 @@ def main():
     # ----------------------------------------------------------------------
     print("\n==================== SETTING 1: Random fraction sweep ====================")
 
-    max_train_setting1 = 500000
+    max_train_setting1 = 50000
     n_test_setting1 = 100000
     seed_base = 0
 
@@ -311,7 +311,7 @@ def main():
         ("Absolute PE",   AbsolutePositionalEncoding2D(d_model, cfg_10.H, cfg_10.W)),
     ]
 
-    n_train_setting2 = 500000
+    n_train_setting2 = 50000
     n_test_setting2 = 100000
     seed_setting2 = 42
 
@@ -373,7 +373,7 @@ def main():
     pattern_train: List[Triplet] = TRIPLETS_POOL[:3]
     pattern_test: List[Triplet] = [(cin, b, a) for (cin, a, b) in pattern_train]
 
-    n_train_setting3 = 500000
+    n_train_setting3 = 50000
     n_test_setting3 = 100000
     seed_setting3 = 123
 
@@ -430,7 +430,7 @@ def main():
 
     forbidden_triplets: List[Triplet] = TRIPLETS_POOL  # all 10 are forbidden
 
-    n_train_setting4 = 500000
+    n_train_setting4 = 50000
     n_test_setting4 = 100000
     seed_setting4 = 999
 
