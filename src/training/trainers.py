@@ -191,10 +191,8 @@ class BlackboardTrainer:
                 f"| val   digit acc: {val_metrics['digit_acc']:.4f}"
             )
             print("-" * 80)
-            # history json after each epoch (so you keep partial results)
-            self._save_history_json()
-
-    
+           
+           
         self._save_checkpoint()
         self._plot_history()
         self._save_history_json()
@@ -464,10 +462,7 @@ class COTTrainer:
             )
             print("-" * 80)
 
-            # history json after each epoch (so you keep partial results)
-            self._save_history_json()
 
-    
         self._save_checkpoint()
         self._plot_history()
         self._save_history_json()
