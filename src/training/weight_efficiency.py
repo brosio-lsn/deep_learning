@@ -11,7 +11,7 @@ from typing import List, Tuple, Dict
 from src.data.addition_algo import BoardConfig
 from src.data.problems import generate_diversified_problems
 from src.data.board_dataset import BlackboardAdditionStepDataset
-from src.models.blackboard_transformer import BlackboardTransformer
+from src.models.transformers import BlackboardTransformer
 from src.models.positional_encodings import (
     SinusoidalPositionalEncoding,
     AbsolutePositionalEncoding2D,

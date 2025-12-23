@@ -59,7 +59,7 @@ def build_initial_board(cfg: BoardConfig, xs: np.ndarray) -> np.ndarray:
     return board
 
 
-def generate_trajectory(
+def generate_trajectory_variant_A(
     cfg: BoardConfig,
     xs: np.ndarray,
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:

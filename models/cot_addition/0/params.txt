@@ -1,0 +1,8 @@
+     ModelConfig(
+            d_model=64,
+            nhead=1,
+            num_layers=2,
+            dim_feedforward=256,
+            dropout=0.1,
+            max_len=200,
+        ),

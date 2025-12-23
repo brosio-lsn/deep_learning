@@ -15,7 +15,7 @@ class TrainConfig:
     num_epochs: int
     lr: float
     log_interval: float   # fraction of epoch
-    enable_logging: bool 
+    enable_docs: bool
     save_model: bool 
     seed: int
     out_dir: str

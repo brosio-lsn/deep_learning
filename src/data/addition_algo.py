@@ -167,10 +167,9 @@ def generate_trajectory_variant_B(
     cfg: BoardConfig,
     xs: np.ndarray
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
- """
-    Generate a trajectory (S_seq, M_seq) for no-masking training (variant B).
-"""
-
+    """
+        Generate a trajectory (S_seq, M_seq) for no-masking training (variant B).
+    """
     S_seq: List[np.ndarray] = []
     M_seq: List[np.ndarray] = []
 

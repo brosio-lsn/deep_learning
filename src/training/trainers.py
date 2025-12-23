@@ -41,15 +41,16 @@ class BlackboardTrainer:
             "val_digit_acc": [],
         }
 
-        self.run_dir = os.path.join(self.train_cfg.out_dir, self.train_cfg.exp_name)
-        os.makedirs(self.run_dir, exist_ok=True)
         self.global_step = 0
+        self.run_dir = os.path.join(self.train_cfg.out_dir, self.train_cfg.exp_name, str(self.global_step))
+        os.makedirs(self.run_dir, exist_ok=True)
+
     
 
     def _save_checkpoint(self):
         if not (self.cfg.enable_docs and self.cfg.save_model):
             return
-        path = os.path.join(self.run_dir,"")
+        path = os.path.join(self.run_dir, f"model{str(self.global_step)}.pt")
         torch.save({"model_state_dict": self.model.state_dict()}, path)
 
     def _save_history_json(self):
@@ -104,9 +105,9 @@ class BlackboardTrainer:
         with torch.set_grad_enabled(is_train):
             for i, batch in enumerate(pbar):
 
-                input_ids  = batch["input_ids"].to(device) 
-                target_ids = batch["target_ids"].to(device)  
-                mask       = batch["mask"].to(device)       
+                input_ids  = batch["input_ids"].to(self.device) 
+                target_ids = batch["target_ids"].to(self.device)  
+                mask       = batch["mask"].to(self.device)       
 
                 if is_train:
                     self.optimizer.zero_grad()
@@ -159,8 +160,9 @@ class BlackboardTrainer:
             "digit_acc": digit_acc,
         }
 
-     def fit(self):
-        print("Starting training CoT transformer ...")
+    def fit(self):
+
+        print("Starting training Blackboard transformer ...")
         for epoch in range(1, self.cfg.num_epochs + 1):
             train_metrics = self._run_epoch(loader=self.train_loader, mode="train", epoch=epoch)
             val_metrics = self._run_epoch(loader=self.val_loader, mode="val", epoch=epoch)
@@ -247,10 +249,10 @@ class COTTrainer:
             "val_digit_acc": [],
         }
 
-
-        self.run_dir = os.path.join(self.cfg.out_dir, self.cfg.exp_name)
-        os.makedirs(self.run_dir, exist_ok=True)
         self.global_step = 0
+        self.run_dir = os.path.join(self.cfg.out_dir, self.cfg.exp_name, str(self.global_step))
+        os.makedirs(self.run_dir, exist_ok=True)
+       
     
 
     def _print_tokens(self, string: str, ids: torch.Tensor, id2tok: Dict[int, str]):
@@ -279,9 +281,9 @@ class COTTrainer:
         header = f"{mode} / Epoch: {epoch} / Batch: {i+1}"
         print(f"{header}\n")
         print("-" * 100)
-        self.print_tokens("Input IDS of first element of the batch: ", input_ids[0], id2tok)
-        self.print_tokens("Target IDS of first element of the batch: ", target_ids[0], id2tok)
-        self.print_tokens("Predicted IDS of first element of the batch: ", pred_ids[0], id2tok)
+        self._print_tokens("Input IDS of first element of the batch: ", input_ids[0], id2tok)
+        self._print_tokens("Target IDS of first element of the batch: ", target_ids[0], id2tok)
+        self._print_tokens("Predicted IDS of first element of the batch: ", pred_ids[0], id2tok)
 
         print("Digit:")
         print("Pred: ", id2tok[pred_ids[0][digit_pos].item()])
@@ -294,9 +296,9 @@ class COTTrainer:
 
 
     def _save_checkpoint(self):
-        if not (self.cfg.enable_docs and self.cfg.save_model):
+        if not self.cfg.save_model:
             return
-        path = os.path.join(self.run_dir,"")
+        path = os.path.join(self.run_dir, "model.pt")
         torch.save({"model_state_dict": self.model.state_dict()}, path)
 
     def _save_history_json(self):
@@ -307,7 +309,7 @@ class COTTrainer:
             json.dump(self.history, f, indent=2)
 
     def _plot_history(self):
-        if not (self.cfg.enable_docs and self.cfg.enable_plots):
+        if not self.cfg.enable_docs:
             return
         try:
             import matplotlib.pyplot as plt
@@ -402,8 +404,8 @@ class COTTrainer:
                 pbar.set_postfix(loss=batch_loss, acc=batch_acc)
 
                 # Print results for first batch of element of the batch if condition met
-                self.print_batch_debug(
-                        mode="Training" if is_train else "Validation"
+                self._print_batch_debug(
+                        mode="Training" if is_train else "Validation",
                         epoch=epoch,
                         i=i,
                         num_batches=len(loader),
@@ -428,7 +430,9 @@ class COTTrainer:
             "digit_acc": digit_acc,
         }
 
+
     def fit(self):
+
         print("Starting training CoT transformer ...")
         for epoch in range(1, self.cfg.num_epochs + 1):
             train_metrics = self._run_epoch(loader=self.train_loader, mode="train", epoch=epoch)
@@ -481,3 +485,17 @@ class COTTrainer:
                 f"val_carry_acc={self.history['val_carry_acc'][e]:.4f}, "
                 f"val_digit_acc={self.history['val_digit_acc'][e]:.4f}"
             )
+
+        self.global_step += 1
+        self.run_dir = os.path.join(self.cfg.out_dir, self.cfg.exp_name, str(self.global_step))
+        os.makedirs(self.run_dir, exist_ok=True)
+        self.history = {
+            "train_loss": [],
+            "train_acc": [],
+            "train_carry_acc": [],
+            "train_digit_acc": [],
+            "val_loss": [],
+            "val_acc": [],
+            "val_carry_acc": [],
+            "val_digit_acc": [],
+        }

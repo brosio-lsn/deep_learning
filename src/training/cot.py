@@ -2,6 +2,7 @@ import torch
 from torch.utils.data import DataLoader
 import torch.nn.functional as F
 from tqdm.auto import tqdm  
+from dataclasses import asdict
 
 from src.data.addition_algo import BoardConfig
 from src.data.problems import generate_problems, generate_diversified_problems
@@ -43,7 +44,7 @@ if __name__ == "__main__":
     cfg = BoardConfig(H=4, W=5, n_digits=3)
 
     n_train = 40_000
-    n_val = 2000
+    n_val = 10_000
     batch_size = 64
     num_epochs = 5
     lr = 3e-4
@@ -61,45 +62,67 @@ if __name__ == "__main__":
     num_training_batches = len(train_loader)
     num_val_batches = len(val_loader)
 
+    model_cfgs = [
+        ModelConfig(
+            d_model=64,
+            nhead=1,
+            num_layers=2,
+            dim_feedforward=256,
+            dropout=0.1,
+            max_len=200,
+        ),
 
-    model_cfg = ModelConfig(
-        d_model = 128,
-        nhead = 4,
-        num_layers = 3,
-        dim_feedforward = 512,
-        dropout = 0.1,
-        max_len = 200
-    )
+        ModelConfig(
+            d_model=64,
+            nhead=2,
+            num_layers=3,
+            dim_feedforward=256,
+            dropout=0.1,
+            max_len=200,
+        ),
+
+        ModelConfig(
+            d_model=128,
+            nhead=2,
+            num_layers=3,
+            dim_feedforward=512,
+            dropout=0.1,
+            max_len=200,
+        ),
+
+        ModelConfig(
+            d_model=128,
+            nhead=4,
+            num_layers=4,
+            dim_feedforward=512,
+            dropout=0.1,
+            max_len=200,
+        ),
+        ModelConfig(
+            d_model=256,
+            nhead=4,
+            num_layers=4,
+            dim_feedforward=512,
+            dropout=0.1,
+            max_len=200,
+        )
+    ]
 
     train_cfg = TrainConfig(
         batch_size = 64,
-        num_epochs = 5,
+        num_epochs = 10,
         lr = 3e-4,
         log_interval = 0.1, 
-        enable_logging = True,
+        enable_docs=True,
         save_model = True,
         seed = 42,
         exp_name = "cot_addition",
         out_dir = "models"
     )
 
-    model = COTTransformer(
-        vocab_size= len(COT_VOCAB_TOKENS),
-        **asdict(model_cfg)
-    ).to(device)
-
-    total_params = sum(p.numel() for p in model.parameters())
-    trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"Model parameters: {total_params:,} total | {trainable_params:,} trainable")
-    print(f"≈ {trainable_params/1e6:.3f}M trainable parameters\n")
-
-    print(f'Model config {model_cfg}')
-
-    optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.lr)
-
     trainer = COTTrainer(
-        model=model,
-        optimizer=optimizer,
+        model=None,
+        optimizer=None,
         device=device,
         train_loader=train_loader,
         val_loader=val_loader,
@@ -108,4 +131,23 @@ if __name__ == "__main__":
         masked_cross_entropy_fn=masked_cross_entropy
     )
 
-    trainer.fit()
+    for cfg in model_cfgs:
+
+        model_cfg = cfg
+
+        model = COTTransformer(
+            vocab_size= len(COT_VOCAB_TOKENS),
+            **asdict(model_cfg)
+        ).to(device)
+
+        trainer.model = model
+
+        total_params = sum(p.numel() for p in model.parameters())
+        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"Model parameters: {total_params:,} total | {trainable_params:,} trainable")
+        print(f"≈ {trainable_params/1e6:.3f}M trainable parameters\n")
+
+        print(f'Model config {model_cfg}')
+        optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.lr)
+        trainer.optimizer = optimizer
+        trainer.fit()
