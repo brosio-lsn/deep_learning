@@ -162,6 +162,15 @@ class RelativePositionBias2D(nn.Module):
         # In attention: expand to (B*n_heads, L, L) and add to attn logits.
 
 #mixed absolute + relative positional encoding
+#eg to call : 
+"""
+pos_enc = Abs2DPlusRelBias2D(
+    abs_pe=AbsolutePositionalEncoding2D(d_model, H, W),
+    rel_bias=RelativePositionBias2D(n_heads=nhead, H=H, W=W),
+)
+model = BlackboardTransformer(vocab_size=vocab, d_model=d_model, nhead=nhead, pos_enc=pos_enc)
+"""
+
 class Abs2DPlusRelBias2D(nn.Module):
     """
     Combine absolute 2D positional encoding (added to x)
