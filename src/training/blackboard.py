@@ -10,6 +10,8 @@ from src.data.problems import generate_problems, generate_diversified_problems
 from src.models.positional_encodings import *
 from src.data.board_dataset import BlackboardAdditionStepDataset
 from src.models.transformers import BlackboardTransformer
+import os
+from dataclasses import asdict
 
 
 def masked_cross_entropy(logits, target_ids, mask):
@@ -85,43 +87,113 @@ def accuracy_with_splits(
         digit_tokens,
     )
 
+def model_cfg_name(cfg: ModelConfig) -> str:
+    return (
+        f"d{cfg.d_model}"
+        f"_h{cfg.nhead}"
+        f"_L{cfg.num_layers}"
+        f"_ff{cfg.dim_feedforward}"
+    )
+
+def make_pes(model_cfg, board_cfg):
+    return [
+        (
+            "relative_pe",
+            RelativePositionBias2D(
+                model_cfg.nhead,
+                board_cfg.H,
+                board_cfg.W,
+            )
+        ),
+        (
+            "sinusoidal_pe",
+            SinusoidalPositionalEncoding(
+                model_cfg.d_model,
+                model_cfg.max_len,
+            )
+        ),
+        (
+            "absolute_pe",
+            AbsolutePositionalEncoding2D(
+                model_cfg.d_model,
+                board_cfg.H,
+                board_cfg.W,
+            )
+        )
+    ]
+
 
 if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
 
-
     board_cfg = BoardConfig(H=4, W=5, n_digits=3)
     vocab_size = 12
     max_len = board_cfg.H * board_cfg.W
 
-    n_train = 500_000
-    n_val = 2_000
+    n_train = 40_000
+    n_val = 10_000
 
-    model_cfg = ModelConfig(
-        d_model = 128,
-        nhead = 4,
-        num_layers = 3,
-        dim_feedforward = 512,
-        dropout = 0.1,
-        max_len = 200
-    )
+    model_cfgs = [
+        ModelConfig(
+            d_model=64,
+            nhead=1,
+            num_layers=2,
+            dim_feedforward=256,
+            dropout=0.1,
+            max_len=200,
+        ),
+
+        ModelConfig(
+            d_model=64,
+            nhead=2,
+            num_layers=3,
+            dim_feedforward=256,
+            dropout=0.1,
+            max_len=200,
+        ),
+
+        ModelConfig(
+            d_model=128,
+            nhead=2,
+            num_layers=3,
+            dim_feedforward=512,
+            dropout=0.1,
+            max_len=200,
+        ),
+
+        ModelConfig(
+            d_model=128,
+            nhead=4,
+            num_layers=4,
+            dim_feedforward=512,
+            dropout=0.1,
+            max_len=200,
+        ),
+        ModelConfig(
+            d_model=256,
+            nhead=4,
+            num_layers=4,
+            dim_feedforward=512,
+            dropout=0.1,
+            max_len=200,
+        )
+    ]
 
     train_cfg = TrainConfig(
-        batch_size=64,
-        num_epochs=5,
-        lr=3e-4,
-        log_interval=0.1,
+        batch_size = 64,
+        num_epochs = 10,
+        lr = 3e-4,
+        log_interval = 0.1, 
         enable_docs=True,
-        enable_plots=True,
-        save_model=True,
-        seed=0,
+        save_model = True,
+        seed = 42,
         out_dir="models",
-        exp_name="blackboard_addition",
+        exp_name="",
     )
 
-
+  
     train_problems = generate_diversified_problems(board_cfg, n_train, seed=0)
     val_problems   = generate_diversified_problems(board_cfg, n_val,   seed=1)
 
@@ -140,41 +212,38 @@ if __name__ == "__main__":
         shuffle=False,
     )
 
+    trainer = BlackboardTrainer(
+        model=None,
+        optimizer=None,
+        device=device,
+        train_loader=train_loader,
+        val_loader=val_loader,
+        train_cfg=None,
+        board_cfg=board_cfg,
+        accuracy_with_splits=accuracy_with_splits,
+        masked_cross_entropy_fn=masked_cross_entropy
+    )
 
-    pes = [
-        ("relative_pe", RelativePositionBias2D(model_cfg.nhead, board_cfg.H, board_cfg.W)),
-        ("sinusoidal_pe", SinusoidalPositionalEncoding(model_cfg.d_model, model_cfg.max_len)),
-        ("absolute_pe", AbsolutePositionalEncoding2D(model_cfg.d_model, board_cfg.H, board_cfg.W)),
-    ]
 
+    for model_cfg in model_cfgs:
+        pes = make_pes(model_cfg, board_cfg)
+        for pe_name, pe in pes:
 
-    for pe_name, pe in pes:
-        print(f"\n===== Starting experiment: {pe_name} =====")
+            cfg_name = model_cfg_name(model_cfg)
+            train_cfg.exp_name = os.path.join(pe_name, cfg_name)
 
-        train_cfg.exp_name = f"blackboard_addition_{pe_name}"
+            print(f"\n===== {pe_name} | {cfg_name} =====")
 
-        model = BlackboardTransformer(
-            vocab_size=12,
-            pos_enc=pe,
-            **asdict(model_cfg)
-        ).to(device)
+            model = BlackboardTransformer(
+                vocab_size=12,
+                pos_enc=pe,
+                **asdict(model_cfg)
+            ).to(device)
 
-        trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-        print(f"Trainable params: {trainable_params/1e6:.3f}M")
-        print(model_cfg)
+            optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.lr)
 
-        optimizer = torch.optim.Adam(model.parameters(), lr=train_cfg.lr)
+            trainer.model = model
+            trainer.optimizer = optimizer
+            trainer.train_cfg = train_cfg
 
-        trainer = BlackboardTrainer(
-            model=model,
-            optimizer=optimizer,
-            device=device,
-            train_loader=train_loader,
-            val_loader=val_loader,
-            train_cfg=train_cfg,
-            board_cfg=board_cfg,
-            accuracy_with_splits=accuracy_with_splits,
-            masked_cross_entropy_fn=masked_cross_entropy
-        )
-
-        trainer.fit()
+            trainer.fit()

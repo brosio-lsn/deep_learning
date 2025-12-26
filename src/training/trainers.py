@@ -41,27 +41,21 @@ class BlackboardTrainer:
             "val_digit_acc": [],
         }
 
-        self.global_step = 0
-        self.run_dir = os.path.join(self.train_cfg.out_dir, self.train_cfg.exp_name, str(self.global_step))
-        os.makedirs(self.run_dir, exist_ok=True)
-
-    
-
     def _save_checkpoint(self):
-        if not (self.cfg.enable_docs and self.cfg.save_model):
+        if not self.train_cfg.save_model:
             return
-        path = os.path.join(self.run_dir, f"model{str(self.global_step)}.pt")
+        path = os.path.join(self.run_dir, "model.pt")
         torch.save({"model_state_dict": self.model.state_dict()}, path)
 
     def _save_history_json(self):
-        if not self.cfg.enable_docs:
+        if not self.train_cfg.enable_docs:
             return
         path = os.path.join(self.run_dir, "history.json")
         with open(path, "w") as f:
             json.dump(self.history, f, indent=2)
 
     def _plot_history(self):
-        if not (self.cfg.enable_docs and self.cfg.enable_plots):
+        if not self.train_cfg.enable_docs:
             return
         try:
             import matplotlib.pyplot as plt
@@ -100,7 +94,7 @@ class BlackboardTrainer:
         total_digit_correct = 0
         total_digit_tokens = 0
 
-        pbar = tqdm(loader, desc=f"Epoch {epoch}/{self.cfg.num_epochs} [{mode}]")
+        pbar = tqdm(loader, desc=f"Epoch {epoch}/{self.train_cfg.num_epochs} [{mode}]")
 
         with torch.set_grad_enabled(is_train):
             for i, batch in enumerate(pbar):
@@ -113,7 +107,7 @@ class BlackboardTrainer:
                     self.optimizer.zero_grad()
 
                 logits, _ = self.model(input_ids)
-                loss = self.loss(logits, target_ids, loss_mask)
+                loss = self.loss(logits, target_ids, mask)
 
                 if is_train:
                     loss.backward()
@@ -162,8 +156,12 @@ class BlackboardTrainer:
 
     def fit(self):
 
+        self.run_dir = os.path.join(self.train_cfg.out_dir, self.train_cfg.exp_name)
+
+        os.makedirs(self.run_dir, exist_ok=True)
+
         print("Starting training Blackboard transformer ...")
-        for epoch in range(1, self.cfg.num_epochs + 1):
+        for epoch in range(1, self.train_cfg.num_epochs + 1):
             train_metrics = self._run_epoch(loader=self.train_loader, mode="train", epoch=epoch)
             val_metrics = self._run_epoch(loader=self.val_loader, mode="val", epoch=epoch)
 
@@ -179,14 +177,14 @@ class BlackboardTrainer:
 
             # print epoch summary (same content)
             print(
-                f"\nEpoch {epoch}/{self.cfg.num_epochs} "
+                f"\nEpoch {epoch}/{self.train_cfg.num_epochs} "
                 f"| train loss/token: {train_metrics['loss']:.4f} "
                 f"| train acc(masked): {train_metrics['acc']:.4f} "
                 f"| train carry acc: {train_metrics['carry_acc']:.4f} "
                 f"| train digit acc: {train_metrics['digit_acc']:.4f}"
             )
             print(
-                f"Epoch {epoch}/{self.cfg.num_epochs} "
+                f"Epoch {epoch}/{self.train_cfg.num_epochs} "
                 f"| val   loss/token: {val_metrics['loss']:.4f} "
                 f"| val   acc(masked): {val_metrics['acc']:.4f} "
                 f"| val   carry acc: {val_metrics['carry_acc']:.4f} "
@@ -201,7 +199,7 @@ class BlackboardTrainer:
 
         # optional: print the whole history (kept)
         print("Training history:")
-        for e in range(self.cfg.num_epochs):
+        for e in range(self.train_cfg.num_epochs):
             print(
                 f"Epoch {e+1}: "
                 f"train_loss={self.history['train_loss'][e]:.4f}, "
@@ -213,6 +211,17 @@ class BlackboardTrainer:
                 f"val_carry_acc={self.history['val_carry_acc'][e]:.4f}, "
                 f"val_digit_acc={self.history['val_digit_acc'][e]:.4f}"
             )
+
+        self.history = {
+            "train_loss": [],
+            "train_acc": [],
+            "train_carry_acc": [],
+            "train_digit_acc": [],
+            "val_loss": [],
+            "val_acc": [],
+            "val_carry_acc": [],
+            "val_digit_acc": [],
+        }
 
 
 class COTTrainer:
