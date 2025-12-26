@@ -220,7 +220,7 @@ def main():
         (256, 1024),
     ]
     fixed_heads_exp1 = 2
-    fixed_layers_exp1 = 3
+    fixed_layers_exp1 = 2
 
     # For each PE: store (params_list, acc_list)
     exp1_results: Dict[str, Dict[str, List[float]]] = {

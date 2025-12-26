@@ -7,7 +7,7 @@ import torch.nn as nn
 
 
 # ---------------------------------------------------------------------------
-# 1D absolute sinusoidal PE (what you already had)
+# 1D absolute sinusoidal PE 
 # ---------------------------------------------------------------------------
 
 class SinusoidalPositionalEncoding(nn.Module):
@@ -160,6 +160,35 @@ class RelativePositionBias2D(nn.Module):
 
         return bias
         # In attention: expand to (B*n_heads, L, L) and add to attn logits.
+
+#mixed absolute + relative positional encoding
+class Abs2DPlusRelBias2D(nn.Module):
+    """
+    Combine absolute 2D positional encoding (added to x)
+    + relative 2D position bias (added to attention logits).
+
+    - forward(x) returns x + abs_pe(x)
+    - get_pos_bias() returns (n_heads, L, L) like RelativePositionBias2D
+    """
+    def __init__(
+        self,
+        abs_pe: nn.Module | None,
+        rel_bias: RelativePositionBias2D | None,
+    ):
+        super().__init__()
+        self.abs_pe = abs_pe
+        self.rel_bias = rel_bias
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        if self.abs_pe is None:
+            return x
+        return self.abs_pe(x)
+
+    def get_pos_bias(self) -> torch.Tensor | None:
+        if self.rel_bias is None:
+            return None
+        return self.rel_bias()
+
 
 
 # ---------------------------------------------------------------------------
