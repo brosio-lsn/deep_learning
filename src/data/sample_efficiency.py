@@ -124,30 +124,133 @@ def generate_setting1_random_fraction(
 
 # ======================================================================
 # Setting 2: position split with triplets_of_interest, generative version
+#  (UPDATED: replace uniform-random digits with sampling from a finite
+#   background set B to reduce "digit generalization" confound)
 # ======================================================================
 
-def _sample_train_problem_setting2(
-    cfg: BoardConfig,
+def _build_background_by_cin(
+    cfg,
     rng: np.random.Generator,
     T: List[Triplet],
+    background_triplets: Iterable[Triplet] | None,
+    background_size_per_cin: int,
+) -> Dict[int, List[Triplet]]:
+    """
+    Build a finite background set B, grouped by carry_in, and disjoint from T.
+    """
+    base = cfg.base
+    T_set = set(T)
+
+    if background_triplets is not None:
+        B_by_cin: Dict[int, List[Triplet]] = {}
+        for (cin, a, b) in background_triplets:
+            if (cin, a, b) in T_set:
+                continue
+            B_by_cin.setdefault(cin, []).append((cin, a, b))
+        return B_by_cin
+
+    B_by_cin: Dict[int, List[Triplet]] = {cin: [] for cin in range(base)}
+    B_set = set()
+
+    def _add_if_ok(t: Triplet):
+        if t in T_set:
+            return
+        if t in B_set:
+            return
+        cin, _, _ = t
+        if len(B_by_cin[cin]) >= background_size_per_cin:
+            return
+        B_by_cin[cin].append(t)
+        B_set.add(t)
+
+    max_tries = 1_000_000
+    tries = 0
+    while tries < max_tries:
+        tries += 1
+        done = all(len(B_by_cin[cin]) >= background_size_per_cin for cin in range(base))
+        if done:
+            break
+        cin = int(rng.integers(0, base))
+        a = int(rng.integers(0, base))
+        b = int(rng.integers(0, base))
+        _add_if_ok((cin, a, b))
+
+    return {cin: lst for cin, lst in B_by_cin.items() if lst}
+
+
+def _sample_background_triplet(
+    rng: np.random.Generator,
+    B_by_cin: Dict[int, List[Triplet]],
+    carry_in: int,
+) -> Triplet:
+    candidates = B_by_cin.get(carry_in, [])
+    if not candidates:
+        raise ValueError(f"No background triplets available for carry_in={carry_in}")
+    return candidates[int(rng.integers(0, len(candidates)))]
+
+
+# ---------------------------------------------------------------------
+# NEW: precompute maps for setting 2
+# ---------------------------------------------------------------------
+
+def _precompute_train_candidates(
+    cfg,
     col_to_triplets: Dict[int, List[Triplet]],
-) -> AdditionProblem:
+) -> Dict[int, Dict[int, List[Triplet]]]:
     """
-    Sample ONE training problem for setting 2.
-
-    For each column:
-      - Let carry_in be determined by previous columns.
-      - Let allowed triplets at this column be those in col_to_triplets[col]
-        whose cin == carry_in.
-      - If no such allowed triplet:
-          pick random digits (a,b) ~ Uniform({0..base-1}), consistent with carry_in.
-        Else:
-          with prob 0.5: same random digits,
-          with prob 0.5: pick one of the allowed triplets (cin,a,b).
-
-    So triplets_of_interest appear ONLY in columns they were assigned to
-    (via allowed_cols), but other columns can use arbitrary (cin,a,b).
+    train_cands[col][cin] = list of triplets allowed at column col with carry_in=cin
     """
+    train_cands: Dict[int, Dict[int, List[Triplet]]] = {col: {} for col in range(cfg.n_digits)}
+    for col in range(cfg.n_digits):
+        by_cin: Dict[int, List[Triplet]] = {}
+        for (cin, a, b) in col_to_triplets.get(col, []):
+            by_cin.setdefault(cin, []).append((cin, a, b))
+        train_cands[col] = by_cin
+    return train_cands
+
+
+def _precompute_forbidden_candidates(
+    cfg,
+    T: List[Triplet],
+    col_to_triplets: Dict[int, List[Triplet]],
+) -> Dict[int, Dict[int, List[Triplet]]]:
+    """
+    forbidden_cands[col][cin] = list of triplets in T with carry_in=cin
+                               that are NOT allowed at column col in train.
+    """
+    # Split T by cin once
+    T_by_cin: Dict[int, List[Triplet]] = {}
+    for t in T:
+        T_by_cin.setdefault(t[0], []).append(t)
+
+    # Allowed sets per column (for membership tests)
+    allowed_set_by_col: Dict[int, set] = {
+        col: set(trips) for col, trips in col_to_triplets.items()
+    }
+
+    forbidden_cands: Dict[int, Dict[int, List[Triplet]]] = {col: {} for col in range(cfg.n_digits)}
+    for col in range(cfg.n_digits):
+        allowed_here = allowed_set_by_col.get(col, set())
+        by_cin: Dict[int, List[Triplet]] = {}
+        for cin, trips in T_by_cin.items():
+            # keep only trips not allowed here
+            by_cin[cin] = [t for t in trips if t not in allowed_here]
+        forbidden_cands[col] = by_cin
+
+    return forbidden_cands
+
+
+# ---------------------------------------------------------------------
+# UPDATED sampling using precomputed maps
+# ---------------------------------------------------------------------
+
+def _sample_train_problem_setting2(
+    cfg,
+    rng: np.random.Generator,
+    train_cands: Dict[int, Dict[int, List[Triplet]]],
+    B_by_cin: Dict[int, List[Triplet]],
+    p_use_special: float = 0.5,
+):
     base = cfg.base
     n_digits = cfg.n_digits
 
@@ -156,73 +259,35 @@ def _sample_train_problem_setting2(
     carry_in = 0
 
     for col in range(n_digits):
-        # Triplets of interest allowed at this column (matching carry_in)
-        candidates = [
-            t for t in col_to_triplets.get(col, [])
-            if t[0] == carry_in
-        ]
-
-        use_special = False
-        if candidates:
-            if rng.random() < 0.5:
-                use_special = True
+        candidates = train_cands[col].get(carry_in, [])
+        use_special = bool(candidates) and (rng.random() < p_use_special)
 
         if use_special:
-            idx = int(rng.integers(0, len(candidates)))
-            cin, a, b = candidates[idx]
-            # cin should equal carry_in by construction
+            cin, a, b = candidates[int(rng.integers(0, len(candidates)))]
         else:
-            # Random digits, arbitrary (not constrained to T)
-            a = int(rng.integers(0, base))
-            b = int(rng.integers(0, base))
-            cin = carry_in
+            cin, a, b = _sample_background_triplet(rng, B_by_cin, carry_in)
 
         s = a + b + cin
-        carry_out = s // base
+        carry_in = s // base
 
         top_digits.append(a)
         bot_digits.append(b)
-        carry_in = carry_out
 
-    top_arr = np.array(top_digits, dtype=np.int64)
-    bot_arr = np.array(bot_digits, dtype=np.int64)
-    top_val = digits_to_number(top_arr, base=base)
-    bot_val = digits_to_number(bot_arr, base=base)
+    top_val = digits_to_number(np.array(top_digits, dtype=np.int64), base=base)
+    bot_val = digits_to_number(np.array(bot_digits, dtype=np.int64), base=base)
     xs = np.array([top_val, bot_val], dtype=np.int64)
     return AdditionProblem(xs, cfg)
 
 
 def _sample_test_problem_setting2(
-    cfg: BoardConfig,
+    cfg,
     rng: np.random.Generator,
-    T: List[Triplet],
-    col_to_triplets: Dict[int, List[Triplet]],
-) -> AdditionProblem:
-    """
-    Sample ONE test problem for setting 2.
-
-    For each column:
-      - Let carry_in be determined by previous columns.
-      - Let forbidden triplets at this column be those in T that:
-          * are NOT in col_to_triplets[col], and
-          * have cin == carry_in.
-      - With prob 0.5 and if forbidden candidates exist:
-          pick one of these forbidden triplets (cin,a,b) → "novel position".
-        Else:
-          pick random digits (a,b) ~ Uniform({0..base-1}), consistent with cin.
-
-    We additionally require that at least ONE column in the problem used
-    a forbidden triplet (i.e., a triplet_of_interest at a new column index);
-    otherwise we resample.
-    """
+    forbidden_cands: Dict[int, Dict[int, List[Triplet]]],
+    B_by_cin: Dict[int, List[Triplet]],
+    p_use_forbidden: float = 0.5,
+):
     base = cfg.base
     n_digits = cfg.n_digits
-    T_set = set(T)
-
-    # Precompute "train-allowed" set for quick membership checks
-    col_allowed_set: Dict[int, set] = {
-        col: set(trips) for col, trips in col_to_triplets.items()
-    }
 
     while True:
         top_digits: List[int] = []
@@ -231,104 +296,63 @@ def _sample_test_problem_setting2(
         used_forbidden = False
 
         for col in range(n_digits):
-            allowed_here = col_allowed_set.get(col, set())
+            forb = forbidden_cands[col].get(carry_in, [])
+            use_forb = bool(forb) and (rng.random() < p_use_forbidden)
 
-            # Triplets in T that are NOT allowed here and whose cin matches
-            forbidden_candidates = [
-                t for t in T
-                if t not in allowed_here and t[0] == carry_in
-            ]
-
-            use_forbidden = False
-            if forbidden_candidates and (rng.random() < 0.5):
-                use_forbidden = True
-
-            if use_forbidden:
-                idx = int(rng.integers(0, len(forbidden_candidates)))
-                cin, a, b = forbidden_candidates[idx]
+            if use_forb:
+                cin, a, b = forb[int(rng.integers(0, len(forb)))]
                 used_forbidden = True
             else:
-                a = int(rng.integers(0, base))
-                b = int(rng.integers(0, base))
-                cin = carry_in
+                cin, a, b = _sample_background_triplet(rng, B_by_cin, carry_in)
 
             s = a + b + cin
-            carry_out = s // base
+            carry_in = s // base
 
             top_digits.append(a)
             bot_digits.append(b)
-            carry_in = carry_out
 
         if not used_forbidden:
-            # This sample never used a "new-position" triplet → resample
             continue
 
-        top_arr = np.array(top_digits, dtype=np.int64)
-        bot_arr = np.array(bot_digits, dtype=np.int64)
-        top_val = digits_to_number(top_arr, base=base)
-        bot_val = digits_to_number(bot_arr, base=base)
+        top_val = digits_to_number(np.array(top_digits, dtype=np.int64), base=base)
+        bot_val = digits_to_number(np.array(bot_digits, dtype=np.int64), base=base)
         xs = np.array([top_val, bot_val], dtype=np.int64)
         return AdditionProblem(xs, cfg)
 
 
 def generate_setting2_position_split(
-    cfg: BoardConfig,
+    cfg,
     n_train: int,
     n_test: int,
     seed: int,
     triplets_of_interest: Iterable[Triplet],
     frac_positions: float,
-) -> Tuple[List[AdditionProblem], List[AdditionProblem], Dict[Triplet, set]]:
-    """
-    Setting 2 (generative version):
-
-      We have a small set T of triplets_of_interest, e.g.
-          T = [(0,5,5), (1,6,6), ...]
-
-      For EACH t in T, we choose a subset A_t of column indices that are
-      "allowed" positions for that triplet in TRAIN, of size
-          floor(frac_positions * n_digits), at least 1.
-
-      Then:
-
-      - TRAIN generation:
-          For each column col, we know which triplets_of_interest are
-          allowed there: map[col] = { t in T | col in A_t }.
-
-          We build each problem column by column, with carry consistency:
-            * carry_in is propagated from previous columns;
-            * if map[col] has some triplets whose cin == carry_in:
-                - with prob 0.5: pick random digits (a,b);
-                - with prob 0.5: pick one of those allowed triplets;
-              otherwise (no candidate) → random digits.
-
-          So triplets_of_interest only appear (if at all) in columns A_t.
-
-      - TEST generation:
-          We want to see triplets_of_interest at columns where they were
-          *not* allowed in train. For a column col with carry_in, define:
-
-              forbidden_candidates(col) = { t in T \ map[col] | t.cin == carry_in }
-
-          For each column:
-            * with prob 0.5 and if forbidden_candidates(col) non-empty:
-                pick a t from forbidden_candidates(col);
-              else:
-                pick random digits (a,b) (not constrained to T).
-
-          We also enforce that at least one column in the problem actually
-          used a forbidden triplet (otherwise the sample is resampled).
-
-      Returns:
-        train_problems, test_problems, allowed_cols
-
-      allowed_cols: dict mapping t ∈ T → set of column indices A_t used for train.
-    """
+    background_triplets: Iterable[Triplet] | None = None,
+    background_size_per_cin: int = 32,
+    p_use_special: float = 0.5,
+    p_use_forbidden: float = 0.5,
+):
     assert cfg.n_addends == 2
     rng = np.random.default_rng(seed)
     T = list(triplets_of_interest)
 
-    # 1) For each triplet t in T, choose its allowed TRAIN columns A_t
+    # 0) Background
+    B_by_cin = _build_background_by_cin(
+        cfg=cfg,
+        rng=rng,
+        T=T,
+        background_triplets=background_triplets,
+        background_size_per_cin=background_size_per_cin,
+    )
+
+    for cin_needed in [0, 1]:
+        if cin_needed in range(cfg.base) and cin_needed not in B_by_cin:
+            warnings.warn(
+                f"[setting2] Background has no triplets for carry_in={cin_needed}. "
+                "You may hit errors if this carry occurs."
+            )
+
+    # 1) Allowed columns for each triplet
     cols = np.arange(cfg.n_digits)
     allowed_cols: Dict[Triplet, set] = {}
     for t in T:
@@ -336,31 +360,35 @@ def generate_setting2_position_split(
         choice = rng.choice(cols, size=n_allowed, replace=False)
         allowed_cols[t] = set(int(c) for c in choice)
 
-    # Build col -> list of triplets_of_interest allowed in that column
     col_to_triplets: Dict[int, List[Triplet]] = {col: [] for col in range(cfg.n_digits)}
     for t, cols_set in allowed_cols.items():
         for col in cols_set:
             col_to_triplets[col].append(t)
 
-    # 2) Generate train problems
-    train_problems: List[AdditionProblem] = []
-    for _ in range(n_train):
-        prob = _sample_train_problem_setting2(cfg, rng, T, col_to_triplets)
-        train_problems.append(prob)
+    # 2) NEW: precompute lookup tables once
+    train_cands = _precompute_train_candidates(cfg, col_to_triplets)
+    forbidden_cands = _precompute_forbidden_candidates(cfg, T, col_to_triplets)
 
-    # 3) Generate test problems
+    # 3) Generate train
+    train_problems = [
+        _sample_train_problem_setting2(cfg, rng, train_cands, B_by_cin, p_use_special=p_use_special)
+        for _ in range(n_train)
+    ]
+
+    # 4) Generate test
     test_problems: List[AdditionProblem] = []
     max_tries = 50 * n_test if n_test > 0 else 0
     tries = 0
     while len(test_problems) < n_test and tries < max_tries:
         tries += 1
-        prob = _sample_test_problem_setting2(cfg, rng, T, col_to_triplets)
-        test_problems.append(prob)
+        test_problems.append(
+            _sample_test_problem_setting2(cfg, rng, forbidden_cands, B_by_cin, p_use_forbidden=p_use_forbidden)
+        )
 
     _check_budget(n_train, len(train_problems), "train problems (setting2)")
     _check_budget(n_test,  len(test_problems),  "test problems  (setting2)")
 
-    return train_problems, test_problems, allowed_cols
+    return train_problems, test_problems, allowed_cols, B_by_cin
 
 
 # ======================================================================
@@ -368,7 +396,17 @@ def generate_setting2_position_split(
 # ======================================================================
 
 # ======================================================================
-# Setting 3: order-of-triplets pattern vs random (generative version)
+# Setting 3: order-of-triplets pattern vs background (generative version)
+#   UPDATED: replace uniform-random digits with sampling from a finite
+#   background set B (disjoint from pattern triplets) to reduce confounding.
+# ======================================================================
+
+# ======================================================================
+# Setting 3: carry-conditioned pattern-vs-background shift (generative)
+#   UPDATED v2: no dependence on column index / len(pattern).
+#   For each column:
+#       with prob p_use_pattern -> sample from PATTERN triplets matching carry_in
+#       else                  -> sample from BACKGROUND triplets matching carry_in
 # ======================================================================
 
 def generate_setting3_order_constraint(
@@ -378,65 +416,88 @@ def generate_setting3_order_constraint(
     seed: int,
     pattern_train: List[Triplet],
     pattern_test: List[Triplet],
-) -> Tuple[List[AdditionProblem], List[AdditionProblem]]:
+    # background controls
+    background_triplets: Iterable[Triplet] | None = None,
+    background_size_per_cin: int = 32,
+    p_use_pattern: float = 0.5,
+) -> Tuple[List[AdditionProblem], List[AdditionProblem], Dict[int, List[Triplet]], Dict[int, List[Triplet]], Dict[int, List[Triplet]]]:
     """
-    Setting 3 (generative):
+    Setting 3 (carry-conditioned mixture) UPDATED:
 
-      - pattern_train: e.g. [tA, tB, tC]
-      - pattern_test:  e.g. [tA, tC, tB]
-        where each tX = (cin, a, b) is a triplet for a *column*.
+    Train and test differ only in which "pattern triplet pool" is preferred.
 
-    For train and test we do NOT enforce that the whole prefix equals
-    the pattern. Instead:
+    For each column:
+      - carry_in is determined by previous columns.
+      - With probability p_use_pattern:
+            sample a triplet from PATTERN pool that matches carry_in
+        Else:
+            sample a triplet from BACKGROUND pool that matches carry_in
+      - Update carry_out from a+b+carry_in.
 
-      • For TRAIN:
-          For each column col:
-            - Keep track of carry_in from previous columns.
-            - If col < len(pattern_train) and pattern_train[col].cin == carry_in:
-                with probability 0.5 → use the pattern triplet at this column;
-                with probability 0.5 → sample (a,b) randomly.
-              Else:
-                always sample (a,b) randomly.
-            - Update carry_out from a + b + cin.
+    Important details:
+      - We no longer use col < len(pattern). Patterns are treated as sets/pools.
+      - Pattern pools and background pools are both split by carry_in to ensure
+        sampling always matches the current carry.
+      - Background B is made disjoint from BOTH pattern_train and pattern_test.
 
-      • For TEST:
-          Same logic, but using pattern_test instead of pattern_train.
-
-    So each column in the first len(pattern_*) positions is a 50/50 mix of:
-      - pattern triplet
-      - random triplet
-    (subject to carry consistency).
-    Columns beyond len(pattern_*) are fully random.
-
-    This creates a distributional bias where train and test have different
-    *preferred* column-wise patterns, but both still contain random columns.
+    Returns:
+      train_problems, test_problems, B_by_cin, Ptr_by_cin, Pte_by_cin
     """
     assert cfg.n_addends == 2
     base = cfg.base
     n_digits = cfg.n_digits
     rng = np.random.default_rng(seed)
 
-    def _sample_from_pattern(pattern: List[Triplet]) -> AdditionProblem:
+    # --- Build pattern pools, split by carry_in ---
+    def _split_by_cin(trips: Iterable[Triplet]) -> Dict[int, List[Triplet]]:
+        out: Dict[int, List[Triplet]] = {}
+        for t in trips:
+            cin, a, b = t
+            out.setdefault(cin, []).append((cin, a, b))
+        return out
+
+    P_train_by_cin = _split_by_cin(pattern_train)
+    P_test_by_cin  = _split_by_cin(pattern_test)
+
+    # --- Build background B disjoint from both patterns ---
+    pattern_union = set(pattern_train) | set(pattern_test)
+    B_by_cin = _build_background_by_cin(
+        cfg=cfg,
+        rng=rng,
+        T=list(pattern_union),                 # treat union as "T" to exclude from B
+        background_triplets=background_triplets,
+        background_size_per_cin=background_size_per_cin,
+    )
+
+    # Safety: ensure we have *some* candidates for common carries
+    # (If a carry appears and the pool is empty, we'll fall back to background if possible.)
+    def _sample_from_pool_by_cin(pool_by_cin: Dict[int, List[Triplet]], cin: int) -> Triplet | None:
+        cands = pool_by_cin.get(cin, [])
+        if not cands:
+            return None
+        return cands[int(rng.integers(0, len(cands)))]
+
+    def _sample_background(cin: int) -> Triplet:
+        return _sample_background_triplet(rng, B_by_cin, cin)
+
+    def _sample_one(pattern_by_cin: Dict[int, List[Triplet]]) -> AdditionProblem:
         top_digits: List[int] = []
         bot_digits: List[int] = []
         carry_in = 0
 
-        for col in range(n_digits):
-            use_pattern = False
-            if col < len(pattern):
-                t_cin, t_a, t_b = pattern[col]
-                if t_cin == carry_in:
-                    # 50% chance to actually use the pattern here
-                    if rng.random() < 0.5:
-                        use_pattern = True
+        for _col in range(n_digits):
+            use_pat = (rng.random() < p_use_pattern)
 
-            if use_pattern:
-                cin, a, b = pattern[col]
-            else:
-                # Random digits, arbitrary (consistent only with current carry_in)
-                a = int(rng.integers(0, base))
-                b = int(rng.integers(0, base))
-                cin = carry_in
+            t = None
+            if use_pat:
+                # try pattern pool first
+                t = _sample_from_pool_by_cin(pattern_by_cin, carry_in)
+
+            if t is None:
+                # fallback to background (either because use_pat=False, or pattern empty for this cin)
+                t = _sample_background(carry_in)
+
+            cin, a, b = t  # cin should match carry_in (pattern pools are split by cin)
 
             s = a + b + cin
             carry_out = s // base
@@ -445,23 +506,15 @@ def generate_setting3_order_constraint(
             bot_digits.append(b)
             carry_in = carry_out
 
-        top_arr = np.array(top_digits, dtype=np.int64)
-        bot_arr = np.array(bot_digits, dtype=np.int64)
-        top_val = digits_to_number(top_arr, base=base)
-        bot_val = digits_to_number(bot_arr, base=base)
+        top_val = digits_to_number(np.array(top_digits, dtype=np.int64), base=base)
+        bot_val = digits_to_number(np.array(bot_digits, dtype=np.int64), base=base)
         xs = np.array([top_val, bot_val], dtype=np.int64)
         return AdditionProblem(xs, cfg)
 
-    # Generate train and test samples
-    train_problems: List[AdditionProblem] = [
-        _sample_from_pattern(pattern_train) for _ in range(n_train)
-    ]
-    test_problems: List[AdditionProblem] = [
-        _sample_from_pattern(pattern_test) for _ in range(n_test)
-    ]
+    train_problems = [_sample_one(P_train_by_cin) for _ in range(n_train)]
+    test_problems  = [_sample_one(P_test_by_cin)  for _ in range(n_test)]
 
-    return train_problems, test_problems
-
+    return train_problems, test_problems, B_by_cin, P_train_by_cin, P_test_by_cin
 
 # ======================================================================
 # Setting 4: full triplet hold-out (never seen in train, required in test)
@@ -471,88 +524,95 @@ def generate_setting3_order_constraint(
 # Setting 4: full triplet hold-out (generative version)
 # ======================================================================
 
+# ======================================================================
+# Setting 4: full triplet hold-out (generative version)
+#   UPDATED: replace uniform random digits (not in H) with sampling from
+#   a finite background set B (disjoint from H), grouped by carry_in.
+# ======================================================================
+
 def generate_setting4_triplet_holdout(
     cfg: BoardConfig,
     n_train: int,
     n_test: int,
     seed: int,
     forbidden_triplets: Iterable[Triplet],
-) -> Tuple[List[AdditionProblem], List[AdditionProblem]]:
+    # background controls
+    background_triplets: Iterable[Triplet] | None = None,
+    background_size_per_cin: int = 64,
+    p_use_forbidden: float = 0.5,
+) -> Tuple[List[AdditionProblem], List[AdditionProblem], Dict[int, List[Triplet]], Dict[int, List[Triplet]]]:
     """
-    Setting 4 (generative):
+    Setting 4 (carry-conditioned holdout), aligned with Setting 3 sampling style.
 
-      Let H be a set of forbidden triplets, e.g. H = [(0, 9, 4), (1, 9, 4)].
+    Pools (split by carry_in):
+      - H_by_cin[cin]: forbidden triplets with that cin
+      - B_by_cin[cin]: background triplets with that cin, disjoint from H
 
-      • TRAIN:
-          Build problems column by column (respecting carry). For each column:
-            - carry_in is determined by previous columns.
-            - Sample random digits (a,b) uniformly in {0..base-1}^2
-              until (carry_in, a, b) ∉ H.
-          So NO forbidden triplet ever appears in train.
+    TRAIN (per column):
+      - always sample from B_by_cin[carry_in]
+      - update carry
 
-      • TEST:
-          Build problems column by column (respecting carry). For each column:
-            - carry_in is determined by previous columns.
-            - With probability 0.5:
-                sample random (a,b) with (carry_in, a, b) ∉ H.
-              With probability 0.5:
-                sample a random triplet from H whose cin == carry_in.
-                If no such forbidden triplet exists for this carry_in,
-                fall back to the "random not in H" case.
-
-          Additionally, we enforce that each test problem contains at least
-          ONE forbidden triplet somewhere; otherwise we resample that problem.
-
-      Returns:
-        train_problems, test_problems
+    TEST (per column):
+      - with probability p_use_forbidden:
+          sample from H_by_cin[carry_in] if non-empty, else fallback to background
+        else:
+          sample from background
+      - update carry
+      - enforce: at least one forbidden used somewhere in the whole test problem
     """
     assert cfg.n_addends == 2
     base = cfg.base
     n_digits = cfg.n_digits
     rng = np.random.default_rng(seed)
 
-    H = set(forbidden_triplets)
+    # --- Split forbidden pool by carry ---
+    H = list(forbidden_triplets)
+    H_set = set(H)
+    H_by_cin: Dict[int, List[Triplet]] = {}
+    for (cin, a, b) in H:
+        H_by_cin.setdefault(cin, []).append((cin, a, b))
 
-    # Helper: random (a,b) such that (cin,a,b) ∉ H
-    def _sample_not_in_H(cin: int) -> Tuple[int, int]:
-        while True:
-            a = int(rng.integers(0, base))
-            b = int(rng.integers(0, base))
-            if (cin, a, b) not in H:
-                return a, b
+    # --- Build background disjoint from forbidden, split by carry ---
+    B_by_cin = _build_background_by_cin(
+        cfg=cfg,
+        rng=rng,
+        T=list(H_set),  # exclude forbidden from background
+        background_triplets=background_triplets,
+        background_size_per_cin=background_size_per_cin,
+    )
 
-    # Helper: random (cin,a,b) ∈ H with given cin, or None if impossible
-    def _sample_forbidden_with_cin(cin: int) -> Tuple[int, int] | None:
-        candidates = [t for t in H if t[0] == cin]
-        if not candidates:
+    def _sample_from_pool_by_cin(pool_by_cin: Dict[int, List[Triplet]], cin: int) -> Triplet | None:
+        cands = pool_by_cin.get(cin, [])
+        if not cands:
             return None
-        t = candidates[int(rng.integers(0, len(candidates)))]
-        _, a, b = t
-        return a, b
+        return cands[int(rng.integers(0, len(cands)))]
 
-    # --- TRAIN: only non-forbidden triplets ---
+    def _sample_background(cin: int) -> Triplet:
+        # uses your helper; raises if missing cin bucket
+        return _sample_background_triplet(rng, B_by_cin, cin)
+
+    # --- TRAIN: only background ---
     def _sample_train_problem() -> AdditionProblem:
         top_digits: List[int] = []
         bot_digits: List[int] = []
         carry_in = 0
 
-        for col in range(n_digits):
-            a, b = _sample_not_in_H(carry_in)
-            s = a + b + carry_in
+        for _col in range(n_digits):
+            cin, a, b = _sample_background(carry_in)
+
+            s = a + b + cin
             carry_out = s // base
 
             top_digits.append(a)
             bot_digits.append(b)
             carry_in = carry_out
 
-        top_arr = np.array(top_digits, dtype=np.int64)
-        bot_arr = np.array(bot_digits, dtype=np.int64)
-        top_val = digits_to_number(top_arr, base=base)
-        bot_val = digits_to_number(bot_arr, base=base)
+        top_val = digits_to_number(np.array(top_digits, dtype=np.int64), base=base)
+        bot_val = digits_to_number(np.array(bot_digits, dtype=np.int64), base=base)
         xs = np.array([top_val, bot_val], dtype=np.int64)
         return AdditionProblem(xs, cfg)
 
-    # --- TEST: mix of forbidden and non-forbidden, but at least one forbidden ---
+    # --- TEST: per-column mixture forbidden/background, ensure at least one forbidden ---
     def _sample_test_problem() -> AdditionProblem:
         while True:
             top_digits: List[int] = []
@@ -560,20 +620,21 @@ def generate_setting4_triplet_holdout(
             carry_in = 0
             used_forbidden = False
 
-            for col in range(n_digits):
-                use_forbidden = (rng.random() < 0.5)
-                if use_forbidden:
-                    fb = _sample_forbidden_with_cin(carry_in)
-                    if fb is not None:
-                        a, b = fb
-                        used_forbidden = True
-                    else:
-                        # No compatible forbidden triplet for this carry_in → fallback
-                        a, b = _sample_not_in_H(carry_in)
-                else:
-                    a, b = _sample_not_in_H(carry_in)
+            for _col in range(n_digits):
+                use_forb = (rng.random() < p_use_forbidden)
 
-                s = a + b + carry_in
+                t: Triplet | None = None
+                if use_forb:
+                    t = _sample_from_pool_by_cin(H_by_cin, carry_in)
+
+                if t is None:
+                    # either we didn't choose forbidden, or no forbidden exists for this carry
+                    t = _sample_background(carry_in)
+                else:
+                    used_forbidden = True
+
+                cin, a, b = t
+                s = a + b + cin
                 carry_out = s // base
 
                 top_digits.append(a)
@@ -581,20 +642,15 @@ def generate_setting4_triplet_holdout(
                 carry_in = carry_out
 
             if not used_forbidden:
-                # We want at least one forbidden triplet somewhere → resample
                 continue
 
-            top_arr = np.array(top_digits, dtype=np.int64)
-            bot_arr = np.array(bot_digits, dtype=np.int64)
-            top_val = digits_to_number(top_arr, base=base)
-            bot_val = digits_to_number(bot_arr, base=base)
+            top_val = digits_to_number(np.array(top_digits, dtype=np.int64), base=base)
+            bot_val = digits_to_number(np.array(bot_digits, dtype=np.int64), base=base)
             xs = np.array([top_val, bot_val], dtype=np.int64)
             return AdditionProblem(xs, cfg)
 
     # Build train / test
-    train_problems: List[AdditionProblem] = [
-        _sample_train_problem() for _ in range(n_train)
-    ]
+    train_problems: List[AdditionProblem] = [_sample_train_problem() for _ in range(n_train)]
 
     test_problems: List[AdditionProblem] = []
     max_tries = 50 * n_test if n_test > 0 else 0
@@ -606,13 +662,15 @@ def generate_setting4_triplet_holdout(
     _check_budget(n_train, len(train_problems), "train problems (setting4)")
     _check_budget(n_test,  len(test_problems),  "test problems  (setting4)")
 
-    return train_problems, test_problems
+    # returning both pools can help debug (optional)
+    return train_problems, test_problems, B_by_cin, H_by_cin
+
+
 
 
 # ======================================================================
 # Small debug main
 # ======================================================================
-
 def _debug_print_problems(label: str, cfg: BoardConfig, problems: List[AdditionProblem], max_n: int = 5):
     print(f"\n=== {label} (showing up to {max_n}) ===")
     for i, prob in enumerate(problems[:max_n]):
@@ -621,70 +679,121 @@ def _debug_print_problems(label: str, cfg: BoardConfig, problems: List[AdditionP
         print(f"  [{i}] {xs[0]} + {xs[1]}  -> triplets: {trips}")
 
 
+def _debug_print_background(label: str, B_by_cin: Dict[int, List[Triplet]], max_per_cin: int = 10):
+    print(f"\n=== {label} (showing up to {max_per_cin} per cin) ===")
+    for cin in sorted(B_by_cin.keys()):
+        shown = B_by_cin[cin][:max_per_cin]
+        print(f"  cin={cin}: {shown} (total={len(B_by_cin[cin])})")
+
+
 def main():
     # Simple config: 3-digit addition, base 10
-    cfg = BoardConfig(H=4, W=5, n_digits=3)
+    cfg = BoardConfig(H=4, W=5, n_digits=5)
 
     print("######## Setting 1: random fraction ########")
-    
-    #train1, test1 = generate_setting1_random_fraction(cfg, n_train=10, n_test=5, seed=0)
-    #_debug_print_problems("Setting 1 - train", cfg, train1)
-    #_debug_print_problems("Setting 1 - test",  cfg, test1)
-    
+    # train1, test1 = generate_setting1_random_fraction(cfg, n_train=10, n_test=5, seed=0)
+    # _debug_print_problems("Setting 1 - train", cfg, train1)
+    # _debug_print_problems("Setting 1 - test",  cfg, test1)
+
+    # -----------------------------
+    # Choose a tiny background B so you can inspect prints easily
+    # (Make sure it is disjoint from T2 / patterns / forbidden where relevant)
+    # -----------------------------
+    B_small: List[Triplet] = [
+        # cin=0 background
+        (0, 0, 1),
+        (0, 2, 2),
+        (0, 7, 5),
+        (0, 8, 9),
+        # cin=1 background
+        (1, 0, 0),
+        (1, 1, 0),
+        (1, 2, 8),
+        (1, 3, 9),
+    ]
 
     print("\n######## Setting 2: position split with limited triplets ########")
-    #cfg = BoardConfig(H=4, W=5, n_digits=10)
-    # Small triplet set: only two types of columns allowed
     T2: List[Triplet] = [
-        (0, 6, 5),  # carry_in 0, 5+5
-        (0, 3, 4),  # carry_in 0, 3+4
+        (0, 6, 5),
+        (0, 3, 4),
+        (1, 6, 5),
+        (1, 3, 4),
     ]
-    train2, test2, allowed_cols2 = generate_setting2_position_split(
+
+    train2, test2, allowed_cols2, B2 = generate_setting2_position_split(
         cfg,
         n_train=10,
         n_test=5,
-        seed=3,
+        seed=16,
         triplets_of_interest=T2,
-        frac_positions=0.9,
+        frac_positions=0.5,
+        background_triplets=B_small,          # <-- force tiny B
+        background_size_per_cin=4,            # unused if background_triplets provided
+        p_use_special=0.5,
+        p_use_forbidden=0.5,
     )
     print(f"Allowed training columns per triplet (setting 2): {allowed_cols2}")
-    #_debug_print_problems("Setting 2 - train", cfg, train2)
-    #_debug_print_problems("Setting 2 - test",  cfg, test2)
-    
+    _debug_print_background("Setting 2 - background B", B2, max_per_cin=10)
+    _debug_print_problems("Setting 2 - train", cfg, train2)
+    _debug_print_problems("Setting 2 - test",  cfg, test2)
+
     print("\n######## Setting 3: order constraint ########")
-    # Define some artificial patterns
-    tA: Triplet = (0, 1, 2)
+    # IMPORTANT: if you want *order* shift (not triplet-set shift),
+    # keep the same triplets and only permute them.
+    tA: Triplet = (1, 1, 2)
     tB: Triplet = (0, 3, 4)
     tC: Triplet = (0, 5, 6)
     pattern_train = [tA, tB, tC]
-    tA : Triplet = (0, 0,0)
-    tB : Triplet = (0, 1,1)
-    tC : Triplet = (0, 2,2)
-    pattern_test  = [tA, tC, tB]
+    pattern_test  = [(1,2,1), (0,4,3), (0,6,5)]  # same triplets, different order
 
-    train3, test3 = generate_setting3_order_constraint(
-        cfg,
-        n_train=5,
-        n_test=5,
-        seed=2,
-        pattern_train=pattern_train,
-        pattern_test=pattern_test,
-    )
+    train3, test3, B3, Ptrain3, Ptest3 = generate_setting3_order_constraint(
+    cfg,
+    n_train=10,
+    n_test=10,
+    seed=12,
+    pattern_train=pattern_train,
+    pattern_test=pattern_test,
+    background_triplets=B_small,          # <-- tiny B again
+    background_size_per_cin=4,
+    p_use_pattern=0.5,
+)
+
+    #_debug_print_background("Setting 3 - background B", B3, max_per_cin=10)
+    #print("\nSetting 3 - pattern pools by carry:")
+    #print("  P_train_by_cin:", Ptrain3)
+    #print("  P_test_by_cin: ", Ptest3)
+
     #_debug_print_problems("Setting 3 - train", cfg, train3)
     #_debug_print_problems("Setting 3 - test",  cfg, test3)
-    
     print("\n######## Setting 4: triplet hold-out ########")
     forbidden: List[Triplet] = [(0, 9, 4), (1, 9, 4)]
-    train4, test4 = generate_setting4_triplet_holdout(
+
+    # Updated generate_setting4_triplet_holdout returns:
+    #   (train4, test4, B_by_cin, H_by_cin)
+    train4, test4, B4, H4 = generate_setting4_triplet_holdout(
         cfg,
         n_train=10,
-        n_test=5,
-        seed=10,
+        n_test=10,
+        seed=11,
         forbidden_triplets=forbidden,
+        background_triplets=B_small,          # <-- tiny B again
+        background_size_per_cin=4,
+        p_use_forbidden=0.5,
     )
-    _debug_print_problems("Setting 4 - train (no forbidden triplets)", cfg, train4)
-    _debug_print_problems("Setting 4 - test  (contains forbidden triplets)", cfg, test4)
-    
+
+    #_debug_print_background("Setting 4 - background B", B4, max_per_cin=10)
+    #print("\nSetting 4 - forbidden pool by carry:")
+    #print("  H_by_cin:", H4)
+
+    #_debug_print_problems("Setting 4 - train (no forbidden triplets)", cfg, train4)
+    #_debug_print_problems("Setting 4 - test  (contains forbidden triplets)", cfg, test4)
+
+
 
 if __name__ == "__main__":
     main()
+
+#setting 1 tests nb of samples needed to generaliye
+#setting 2 tests how able to generalise to tripplets appearing in different cols from train/test
+#settign 3 tests if can generalise from permutation of cols (ie carry,a ,b becomes carry,b,a)
+#last tests generalisation to unseen tripplets (probably the hardest)

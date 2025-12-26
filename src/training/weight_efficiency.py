@@ -16,6 +16,7 @@ from src.models.positional_encodings import (
     SinusoidalPositionalEncoding,
     AbsolutePositionalEncoding2D,
     RelativePositionBias2D,
+    Abs2DPlusRelBias2D,
 )
 
 
@@ -183,35 +184,49 @@ def main():
     print("Using device:", device)
     torch.manual_seed(0)
 
-    # ------------------------------------------------------------
-    # Data: 5-digit addition, shared across all experiments
-    # ------------------------------------------------------------
-    # 5-digit numbers → BoardConfig
+    # -------------------------
+    # Data: 5-digit addition
+    # -------------------------
     n_digits = 5
     cfg = BoardConfig(H=4, W=n_digits + 2, n_digits=n_digits)
     max_len = cfg.H * cfg.W
 
-    # You wanted ~150k training examples; keep test sizable too.
-    n_train = 150_000
-    n_test  = 200_000
+    n_train = 100_000
+    n_test  = 100_000
+
 
     print(f"Generating data: {n_train} train problems, {n_test} test problems (5-digit)")
     train_problems = generate_diversified_problems(cfg, n_train, seed=0)
     test_problems  = generate_diversified_problems(cfg, n_test,  seed=1)
 
-    # Common training hyperparameters
     dropout = 0.1
     batch_size = 256
-    num_epochs = 8     # adjust if you want more / less training
+    num_epochs = 8
     lr = 3e-4
 
-    # Names of PE variants
-    pe_names = ["Relative PE", "Sinusoidal PE", "Absolute PE"]
+    # Include your mixed variant here
+    pe_names = ["Relative PE", "Sinusoidal PE", "Absolute PE", "Abs+Rel PE"]
+
+    def build_pos_enc(pe_name: str, d_model: int, n_heads: int):
+        """Factory: build the PE module consistent with d_model / n_heads."""
+        if pe_name == "Relative PE":
+            return RelativePositionBias2D(n_heads, cfg.H, cfg.W)
+        if pe_name == "Sinusoidal PE":
+            return SinusoidalPositionalEncoding(d_model, max_len=max_len)
+        if pe_name == "Absolute PE":
+            return AbsolutePositionalEncoding2D(d_model, cfg.H, cfg.W)
+        if pe_name == "Abs+Rel PE":
+            return Abs2DPlusRelBias2D(
+                abs_pe=AbsolutePositionalEncoding2D(d_model, cfg.H, cfg.W),
+                rel_bias=RelativePositionBias2D(n_heads, cfg.H, cfg.W),
+            )
+        raise ValueError(f"Unknown PE name: {pe_name}")
 
     # ----------------------------------------------------------------------
-    # Experiment 1: width sweep (vary d_model, d_ff), 3 layers, 2 heads
+    # Experiment 1: width sweep (vary d_model, d_ff), fixed layers & heads
     # ----------------------------------------------------------------------
     print("\n==================== Experiment 1: Width sweep ====================")
+
     width_configs: List[Tuple[int, int]] = [
         (64, 256),
         (96, 384),
@@ -222,25 +237,19 @@ def main():
     fixed_heads_exp1 = 2
     fixed_layers_exp1 = 2
 
-    # For each PE: store (params_list, acc_list)
     exp1_results: Dict[str, Dict[str, List[float]]] = {
         name: {"params": [], "acc": []} for name in pe_names
     }
 
     for (d_model, d_ff) in width_configs:
-        print(f"\n[Exp1] d_model={d_model}, d_ff={d_ff}, "
-              f"layers={fixed_layers_exp1}, heads={fixed_heads_exp1}")
+        if d_model % fixed_heads_exp1 != 0:
+            print(f"Skipping d_model={d_model} because not divisible by heads={fixed_heads_exp1}")
+            continue
+
+        print(f"\n[Exp1] d_model={d_model}, d_ff={d_ff}, layers={fixed_layers_exp1}, heads={fixed_heads_exp1}")
 
         for pe_name in pe_names:
-            # Instantiate appropriate PE module for this d_model / head config
-            if pe_name == "Relative PE":
-                pos_enc = RelativePositionBias2D(fixed_heads_exp1, cfg.H, cfg.W)
-            elif pe_name == "Sinusoidal PE":
-                pos_enc = SinusoidalPositionalEncoding(d_model, max_len=max_len)
-            elif pe_name == "Absolute PE":
-                pos_enc = AbsolutePositionalEncoding2D(d_model, cfg.H, cfg.W)
-            else:
-                raise ValueError(f"Unknown PE name: {pe_name}")
+            pos_enc = build_pos_enc(pe_name, d_model=d_model, n_heads=fixed_heads_exp1)
 
             acc, n_params = train_one_model(
                 cfg=cfg,
@@ -262,15 +271,16 @@ def main():
             exp1_results[pe_name]["params"].append(n_params)
             exp1_results[pe_name]["acc"].append(acc)
 
-    # Plot Experiment 1: test acc vs total params
     plt.figure()
     for pe_name in pe_names:
         params = exp1_results[pe_name]["params"]
         accs   = exp1_results[pe_name]["acc"]
-        # sort by params for monotone curves
         pairs = sorted(zip(params, accs), key=lambda x: x[0])
+        if not pairs:
+            continue
         p_sorted, a_sorted = zip(*pairs)
         plt.plot(p_sorted, a_sorted, marker="o", label=pe_name)
+
     plt.xlabel("Total trainable parameters")
     plt.ylabel("Test masked accuracy")
     plt.ylim(0.0, 1.05)
@@ -286,10 +296,12 @@ def main():
     # ----------------------------------------------------------------------
     print("\n==================== Experiment 2: Depth sweep ====================")
 
-    # Fixed width
     d_model_exp2 = 128
     d_ff_exp2    = 512
     n_heads_exp2 = 2
+
+    if d_model_exp2 % n_heads_exp2 != 0:
+        raise ValueError("d_model_exp2 must be divisible by n_heads_exp2")
 
     layers_list = [1, 2, 3, 4, 5, 6]
 
@@ -298,20 +310,12 @@ def main():
     }
 
     for L in layers_list:
-        print(f"\n[Exp2] num_layers={L}, d_model={d_model_exp2}, "
-              f"d_ff={d_ff_exp2}, heads={n_heads_exp2}")
+        print(f"\n[Exp2] num_layers={L}, d_model={d_model_exp2}, d_ff={d_ff_exp2}, heads={n_heads_exp2}")
 
         for pe_name in pe_names:
-            if pe_name == "Relative PE":
-                pos_enc = RelativePositionBias2D(n_heads_exp2, cfg.H, cfg.W)
-            elif pe_name == "Sinusoidal PE":
-                pos_enc = SinusoidalPositionalEncoding(d_model_exp2, max_len=max_len)
-            elif pe_name == "Absolute PE":
-                pos_enc = AbsolutePositionalEncoding2D(d_model_exp2, cfg.H, cfg.W)
-            else:
-                raise ValueError(f"Unknown PE name: {pe_name}")
+            pos_enc = build_pos_enc(pe_name, d_model=d_model_exp2, n_heads=n_heads_exp2)
 
-            acc, n_params = train_one_model(
+            acc, _ = train_one_model(
                 cfg=cfg,
                 train_problems=train_problems,
                 test_problems=test_problems,
@@ -331,12 +335,12 @@ def main():
             exp2_results[pe_name]["layers"].append(L)
             exp2_results[pe_name]["acc"].append(acc)
 
-    # Plot Experiment 2: test acc vs num_layers
     plt.figure()
     for pe_name in pe_names:
         layers = exp2_results[pe_name]["layers"]
         accs   = exp2_results[pe_name]["acc"]
         plt.plot(layers, accs, marker="o", label=pe_name)
+
     plt.xlabel("Number of Transformer layers")
     plt.ylabel("Test masked accuracy")
     plt.ylim(0.0, 1.05)
@@ -352,35 +356,27 @@ def main():
     # ----------------------------------------------------------------------
     print("\n==================== Experiment 3: Head sweep ====================")
 
-    # Fixed width & depth
-    d_model_exp3 = 128
-    d_ff_exp3    = 512
-    num_layers_exp3 = 3
+    d_model_exp3 = 120
+    d_ff_exp3    = 256
+    num_layers_exp3 = 2
 
-    # IMPORTANT: d_model must be divisible by n_heads.
-    # For d_model=128, valid choices include {1, 2, 4, 8, 16}.
-    # We pick a small set {1, 2, 4, 8}.
-    heads_list = [1, 2, 4, 8]
+    heads_list = [1, 2, 3, 4]  # valid because 120 divisible by all of these
 
     exp3_results: Dict[str, Dict[str, List[float]]] = {
         name: {"heads": [], "acc": []} for name in pe_names
     }
 
     for nh in heads_list:
-        print(f"\n[Exp3] n_heads={nh}, d_model={d_model_exp3}, "
-              f"d_ff={d_ff_exp3}, layers={num_layers_exp3}")
+        if d_model_exp3 % nh != 0:
+            print(f"Skipping nh={nh} because d_model={d_model_exp3} not divisible by nh")
+            continue
+
+        print(f"\n[Exp3] n_heads={nh}, d_model={d_model_exp3}, d_ff={d_ff_exp3}, layers={num_layers_exp3}")
 
         for pe_name in pe_names:
-            if pe_name == "Relative PE":
-                pos_enc = RelativePositionBias2D(nh, cfg.H, cfg.W)
-            elif pe_name == "Sinusoidal PE":
-                pos_enc = SinusoidalPositionalEncoding(d_model_exp3, max_len=max_len)
-            elif pe_name == "Absolute PE":
-                pos_enc = AbsolutePositionalEncoding2D(d_model_exp3, cfg.H, cfg.W)
-            else:
-                raise ValueError(f"Unknown PE name: {pe_name}")
+            pos_enc = build_pos_enc(pe_name, d_model=d_model_exp3, n_heads=nh)
 
-            acc, n_params = train_one_model(
+            acc, _ = train_one_model(
                 cfg=cfg,
                 train_problems=train_problems,
                 test_problems=test_problems,
@@ -400,12 +396,12 @@ def main():
             exp3_results[pe_name]["heads"].append(nh)
             exp3_results[pe_name]["acc"].append(acc)
 
-    # Plot Experiment 3: test acc vs n_heads
     plt.figure()
     for pe_name in pe_names:
         heads = exp3_results[pe_name]["heads"]
         accs  = exp3_results[pe_name]["acc"]
         plt.plot(heads, accs, marker="o", label=pe_name)
+
     plt.xlabel("Number of attention heads")
     plt.ylabel("Test masked accuracy")
     plt.ylim(0.0, 1.05)
@@ -419,3 +415,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
