@@ -196,16 +196,18 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
 
+#prev was with 2 H, 2 L (26 dec)
+
     # -------------------------------
     # Shared model hyperparameters
     # -------------------------------
     d_model = 128
-    n_heads = 2
-    num_layers = 2
+    n_heads = 3
+    num_layers = 3
     dim_feedforward = 512
     dropout = 0.1
     batch_size = 128
-    num_epochs = 8
+    num_epochs = 10
     #num_epochs = 1
     lr = 3e-4
 
@@ -232,8 +234,8 @@ def main():
     # ----------------------------------------------------------------------
     print("\n==================== SETTING 1: Random fraction sweep ====================")
 
-    max_train_setting1 = 50000
-    n_test_setting1 = 40000
+    max_train_setting1 = 100000
+    n_test_setting1 = 100000
     #max_train_setting1 = 10
     #n_test_setting1 = 10
     seed_base = 0
@@ -319,7 +321,7 @@ def main():
     # ----------------------------------------------------------------------
     print("\n==================== SETTING 2: Position split (10 digits) ====================")
 
-    cfg_10 = BoardConfig(H=4, W=10 + 2, n_digits=10)
+    cfg_10 = BoardConfig(H=4, W=20 + 2, n_digits=20)
     max_len_10 = cfg_10.H * cfg_10.W
 
     pes_10 = [
@@ -332,8 +334,8 @@ def main():
         )),
     ]
 
-    n_train_setting2 = 20000
-    n_test_setting2 = 20000
+    n_train_setting2 = 40000
+    n_test_setting2 = 40000
     #n_train_setting2 = 10
     #n_test_setting2 = 10
     seed_setting2 = 42
@@ -405,8 +407,8 @@ def main():
     pattern_train: List[Triplet] = TRIPLETS_POOL[:]  # already 16 with both carries
     pattern_test: List[Triplet] = [(cin, b, a) for (cin, a, b) in pattern_train]
 
-    n_train_setting3 = 20000
-    n_test_setting3 = 20000
+    n_train_setting3 = 40000
+    n_test_setting3 = 40000
     #n_train_setting3 = 10
     #n_test_setting3 = 10
     seed_setting3 = 123
@@ -465,8 +467,8 @@ def main():
 
     forbidden_triplets: List[Triplet] = TRIPLETS_POOL[:]  # all 16 are forbidden (both carries)
 
-    n_train_setting4 = 20000
-    n_test_setting4 = 20000
+    n_train_setting4 = 40000
+    n_test_setting4 = 40000
     #n_train_setting4 = 10
     #n_test_setting4 = 10
     seed_setting4 = 999
@@ -521,3 +523,6 @@ if __name__ == "__main__":
 
 
 #TODO change nb of epochs and nb train/test
+
+
+#logique que abs 2d doit meilleur ptet, avec ABS+REL; pour setting 2, rel devrait être mieux, pour 4 personne 
