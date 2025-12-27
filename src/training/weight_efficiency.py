@@ -191,8 +191,8 @@ def main():
     cfg = BoardConfig(H=4, W=n_digits + 2, n_digits=n_digits)
     max_len = cfg.H * cfg.W
 
-    n_train = 100_000
-    n_test  = 100_000
+    n_train = 150000
+    n_test  = 150000
 
 
     print(f"Generating data: {n_train} train problems, {n_test} test problems (5-digit)")
@@ -201,7 +201,7 @@ def main():
 
     dropout = 0.1
     batch_size = 256
-    num_epochs = 8
+    num_epochs = 10
     lr = 3e-4
 
     # Include your mixed variant here
@@ -356,8 +356,8 @@ def main():
     # ----------------------------------------------------------------------
     print("\n==================== Experiment 3: Head sweep ====================")
 
-    d_model_exp3 = 120
-    d_ff_exp3    = 256
+    d_model_exp3 = 132
+    d_ff_exp3    = 512
     num_layers_exp3 = 2
 
     heads_list = [1, 2, 3, 4]  # valid because 120 divisible by all of these

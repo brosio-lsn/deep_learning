@@ -300,3 +300,28 @@ class COTTransformer(nn.Module):
         if return_attn:
             return logits, attn_all_layers
         return logits, None
+    
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
