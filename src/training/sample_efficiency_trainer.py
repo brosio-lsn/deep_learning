@@ -202,7 +202,7 @@ def main():
     # Shared model hyperparameters
     # -------------------------------
     d_model = 128
-    n_heads = 3
+    n_heads = 2
     num_layers = 3
     dim_feedforward = 512
     dropout = 0.1
@@ -234,8 +234,8 @@ def main():
     # ----------------------------------------------------------------------
     print("\n==================== SETTING 1: Random fraction sweep ====================")
 
-    max_train_setting1 = 100000
-    n_test_setting1 = 100000
+    max_train_setting1 = 50000
+    n_test_setting1 = 50000
     #max_train_setting1 = 10
     #n_test_setting1 = 10
     seed_base = 0
@@ -321,7 +321,7 @@ def main():
     # ----------------------------------------------------------------------
     print("\n==================== SETTING 2: Position split (10 digits) ====================")
 
-    cfg_10 = BoardConfig(H=4, W=20 + 2, n_digits=20)
+    cfg_10 = BoardConfig(H=4, W=15 + 2, n_digits=15)
     max_len_10 = cfg_10.H * cfg_10.W
 
     pes_10 = [
