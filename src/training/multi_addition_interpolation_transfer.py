@@ -79,7 +79,7 @@ def accuracy_with_splits(
 
 def build_blackboard_model(pe_key: str, cfg: BoardConfig) -> BlackboardTransformer:
     d_model = 128
-    n_heads = 1
+    n_heads = 4
     num_layers = 4
     dim_feedforward = 512
     max_len = cfg.H * cfg.W

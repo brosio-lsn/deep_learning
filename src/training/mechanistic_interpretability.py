@@ -23,7 +23,7 @@ from src.models.positional_encodings import (
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 CHECKPOINT_DIR = "src/training/trained_weights"
-OUTPUT_DIR = "attn_viz_1head_10layers"
+OUTPUT_DIR = "attn_viz_4head_4layers"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -79,7 +79,7 @@ def accuracy_with_splits(
 
 def build_blackboard_model(pe_key: str, cfg: BoardConfig) -> BlackboardTransformer:
     d_model = 128
-    n_heads = 1
+    n_heads = 4
     num_layers = 4
     dim_feedforward = 512
     max_len = cfg.H * cfg.W

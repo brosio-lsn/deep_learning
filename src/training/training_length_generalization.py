@@ -8,11 +8,11 @@ from tqdm.auto import tqdm  # <-- NEW
 from src.data.addition_algo import BoardConfig
 from src.data.problems import generate_problems, generate_diversified_problems
 from src.data.board_dataset import BlackboardAdditionStepDataset
-from src.models.blackboard_transformer import BlackboardTransformer
+from src.models.transformers import BlackboardTransformer
 
 from src.data.cot_dataset import CoTAdditionDataset, COT_VOCAB_TOKENS, ID2TOK
 from src.data.sampler import BucketBatchSampler
-from src.models.blackboard_transformer import COTTransformer
+from src.models.transformers import COTTransformer
 from src.models.positional_encodings import *
 
 
@@ -161,7 +161,7 @@ def main():
     n_train_problems = 500_000
     n_val_problems = 2000
     batch_size = 64
-    num_epochs = 5
+    num_epochs = 3
     lr = 3e-4
 
     train_problems = generate_diversified_problems(cfg, n_train_problems, seed=0)
@@ -181,6 +181,10 @@ def main():
         ("Relative PE", RelativePositionBias2D(n_heads, cfg.H, cfg.W)),
         ("Sinusoidal PE", SinusoidalPositionalEncoding(d_model, max_len=max_len)),
         ("Absolute PE", AbsolutePositionalEncoding2D(d_model, cfg.H, cfg.W)),
+        ("Abs+Rel PE",Abs2DPlusRelBias2D(
+                abs_pe=AbsolutePositionalEncoding2D(d_model, cfg.H, cfg.W),
+                rel_bias=RelativePositionBias2D(n_heads, cfg.H, cfg.W),
+            ))
     ]
 
     for pe in pes:
@@ -381,11 +385,11 @@ def main():
         plt.xlabel("Number of digits")
         plt.ylabel("Accuracy")
         plt.ylim(0.0, 1.05)
-        plt.title(f"{pe[0]} - generalization")
+        plt.title(f"{pe[0]} - length generalization")
         plt.legend()
         plt.grid(True)
         filename = pe[0].lower().replace(" ", "_")
-        plt.savefig(f"generalization_{filename}.png")
+        plt.savefig(f"length_generalization_{filename}.png")
         plt.close()
 
 

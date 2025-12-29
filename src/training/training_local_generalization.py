@@ -10,11 +10,12 @@ import matplotlib.pyplot as plt
 from src.data.addition_algo import BoardConfig
 from src.data.problems import generate_diversified_problems
 from src.data.board_dataset import BlackboardAdditionStepDataset
-from src.models.blackboard_transformer import BlackboardTransformer
+from src.models.transformers import BlackboardTransformer
 from src.models.positional_encodings import (
     RelativePositionBias2D,
     SinusoidalPositionalEncoding,
     AbsolutePositionalEncoding2D,
+    Abs2DPlusRelBias2D
 )
 
 
@@ -161,7 +162,7 @@ def main():
     n_train_problems = 500_000
     n_val_problems = 2_000
     batch_size = 64
-    num_epochs = 2
+    num_epochs = 3
     lr = 3e-4
 
     train_problems = generate_diversified_problems(
@@ -180,13 +181,19 @@ def main():
     n_heads = 4
 
     pos_encs = [
-        ("Relative PE", RelativePositionBias2D(n_heads, cfg_train.H, cfg_train.W)),
+        # ("Relative PE", RelativePositionBias2D(n_heads, cfg_train.H, cfg_train.W)),
         # (
         #     "Sinusoidal PE",
         #     SinusoidalPositionalEncoding(d_model, max_len=max_len),
         # ),
         # ("Absolute PE", AbsolutePositionalEncoding2D(d_model, cfg_train.H, cfg_train.W)),
+        ("Abs+Rel PE",Abs2DPlusRelBias2D(
+                abs_pe=AbsolutePositionalEncoding2D(d_model, cfg_train.H, cfg_train.W),
+                rel_bias=RelativePositionBias2D(n_heads, cfg_train.H, cfg_train.W),
+            ))
     ]
+
+
 
     for pe_name, pe_module in pos_encs:
         print(f"Starting location experiment for {pe_name} ...")
