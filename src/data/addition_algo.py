@@ -7,7 +7,9 @@ import numpy as np
 DIGIT_TOKENS = {str(i): i for i in range(10)}
 PLUS_TOKEN   = 10
 BLANK_TOKEN  = 11
+VOID_TOKEN   = 12
 
+VOCAB_SIZE   = 13  # digits (0-9) + PLUS + BLANK + VOID
 
 @dataclass
 class BoardConfig:
