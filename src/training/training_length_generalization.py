@@ -154,7 +154,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using device:", device)
 
-    max_eval_digits = 7
+    max_eval_digits = 9
     cfg = BoardConfig(H=4, W=max_eval_digits + 2, n_digits=3)
     vocab_size = 12
 
