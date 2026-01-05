@@ -248,7 +248,7 @@ class COTTransformer(nn.Module):
     def forward(
         self,
         input_ids: torch.Tensor,                       # (B, L)
-        src_mask: torch.Tensor,  # (L, L)
+        src_mask: Optional[torch.Tensor] = None,  # (L, L)
         src_key_padding_mask: Optional[torch.Tensor] = None,  # (B, L) or None
         return_attn: bool = False,
     ) -> Tuple[torch.Tensor, Optional[List[torch.Tensor]]]:

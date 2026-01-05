@@ -95,9 +95,11 @@ def model_cfg_name(cfg: ModelConfig) -> str:
         f"_ff{cfg.dim_feedforward}"
     )
 
+
 def make_pes(model_cfg, board_cfg):
     return [
         (
+            (
             "relative_pe",
             RelativePositionBias2D(
                 model_cfg.nhead,
@@ -118,6 +120,11 @@ def make_pes(model_cfg, board_cfg):
                 model_cfg.d_model,
                 board_cfg.H,
                 board_cfg.W,
+            )
+        ),
+            "abs_rel_pe",  Abs2DPlusRelBias2D(
+            abs_pe=AbsolutePositionalEncoding2D(model_cfg.d_model, board_cfg.H, board_cfg.W),
+            rel_bias=RelativePositionBias2D(model_cfg.nhead, board_cfg.H, board_cfg.W),
             )
         )
     ]
