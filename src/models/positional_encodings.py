@@ -34,14 +34,91 @@ class SinusoidalPositionalEncoding(nn.Module):
         """
         L = x.size(1)
         return x + self.pe[:, :L, :]
+    
 
+def _build_sinusoid_table(length: int, d_model: int, device=None, dtype=torch.float32) -> torch.Tensor:
+    """
+    Returns: (length, d_model) fixed sinusoidal table (no learnable params).
+    Same formula as standard 1D sinusoidal PE.
+    """
+    if length <= 0:
+        raise ValueError(f"length must be > 0, got {length}")
+    if d_model <= 0:
+        raise ValueError(f"d_model must be > 0, got {d_model}")
+
+    device = device if device is not None else torch.device("cpu")
+    pe = torch.zeros(length, d_model, device=device, dtype=dtype)
+
+    position = torch.arange(0, length, device=device, dtype=dtype).unsqueeze(1)  # (L, 1)
+    div_term = torch.exp(
+        torch.arange(0, d_model, 2, device=device, dtype=dtype) * (-math.log(10000.0) / d_model)
+    )  # (d_model/2,)
+
+    pe[:, 0::2] = torch.sin(position * div_term)
+    pe[:, 1::2] = torch.cos(position * div_term)
+    return pe
+
+
+class AbsolutePositionalEncoding2D(nn.Module):
+    """
+    Fixed 2D absolute positional encoding for an H x W grid (NO learnable params).
+
+    For flattened position p (0..H*W-1):
+        row = p // W
+        col = p % W
+        PE[p] = row_sin[row] + col_sin[col]
+
+    where row_sin is a 1D sinusoidal table of shape (H, d_model),
+    and col_sin is a 1D sinusoidal table of shape (W, d_model).
+
+    This matches your previous learned Abs2D behavior (row_emb + col_emb),
+    but with fixed sin/cos features instead of embeddings.
+    """
+
+    def __init__(self, d_model: int, H: int, W: int, scale: float = 1.0):
+        super().__init__()
+        self.d_model = d_model
+        self.H = H
+        self.W = W
+        self.scale = float(scale)
+
+        # Build fixed sin/cos tables on CPU; they’ll move with .to(device)
+        row_pe = _build_sinusoid_table(H, d_model, device=torch.device("cpu"))
+        col_pe = _build_sinusoid_table(W, d_model, device=torch.device("cpu"))
+
+        # Store as buffers (not trainable)
+        self.register_buffer("row_pe", row_pe, persistent=False)  # (H, D)
+        self.register_buffer("col_pe", col_pe, persistent=False)  # (W, D)
+
+        # Precompute row/col indices for flattened positions
+        positions = torch.arange(H * W, dtype=torch.long)
+        row_idx = positions // W
+        col_idx = positions % W
+        self.register_buffer("row_idx", row_idx, persistent=False)  # (L,)
+        self.register_buffer("col_idx", col_idx, persistent=False)  # (L,)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: (B, L, D) where L == H*W and D == d_model
+        returns x + scale * PE
+        """
+        B, L, D = x.shape
+        if D != self.d_model:
+            raise ValueError(f"Mismatch in d_model: x has D={D}, expected {self.d_model}")
+        if L != self.H * self.W:
+            raise ValueError(f"Sequence length must be H*W={self.H*self.W}, got L={L}")
+
+        # row_pe[row_idx] -> (L, D), col_pe[col_idx] -> (L, D)
+        pe = self.row_pe[self.row_idx] + self.col_pe[self.col_idx]  # (L, D)
+        pe = pe.unsqueeze(0)  # (1, L, D)
+        return x + self.scale * pe
 
 # ---------------------------------------------------------------------------
 # 2D absolute PE: row + column embeddings (DETR-style)
 # ---------------------------------------------------------------------------
-
+"""
 class AbsolutePositionalEncoding2D(nn.Module):
-    """
+
     2D absolute positional encoding for an H x W grid.
 
     For each flattened position p (0..H*W-1), we compute:
@@ -50,7 +127,7 @@ class AbsolutePositionalEncoding2D(nn.Module):
         PE[p] = row_emb[row] + col_emb[col]
 
     This is the "row+column embeddings" style often used in vision Transformers.
-    """
+
 
     def __init__(self, d_model: int, H: int, W: int):
         super().__init__()
@@ -69,9 +146,9 @@ class AbsolutePositionalEncoding2D(nn.Module):
         self.register_buffer("col_idx", col_idx, persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """
+
         x: (B, L, D) where L == H * W
-        """
+
         B, L, D = x.shape
         assert D == self.d_model, "Mismatch in d_model."
         assert L == self.H * self.W, "Sequence length must be H*W for 2D PE."
@@ -82,7 +159,7 @@ class AbsolutePositionalEncoding2D(nn.Module):
         pe = pe.unsqueeze(0)                 # (1, L, D) for broadcast
 
         return x + pe
-
+"""
 
 # ---------------------------------------------------------------------------
 # 2D relative position bias: B(q,k) = b_x(Δx) + b_y(Δy)

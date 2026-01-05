@@ -207,7 +207,7 @@ def main():
     dim_feedforward = 512
     dropout = 0.1
     batch_size = 128
-    num_epochs = 10
+    num_epochs = 12                      
     #num_epochs = 1
     lr = 3e-4
 
@@ -234,8 +234,8 @@ def main():
     # ----------------------------------------------------------------------
     print("\n==================== SETTING 1: Random fraction sweep ====================")
 
-    max_train_setting1 = 50000
-    n_test_setting1 = 50000
+    max_train_setting1 = 40000
+    n_test_setting1 = 40000
     #max_train_setting1 = 10
     #n_test_setting1 = 10
     seed_base = 0
@@ -312,8 +312,8 @@ def main():
         (0, 7, 0), (0, 7, 2), (0, 8, 1), (0, 8, 3),
         (0, 9, 2), (0, 9, 4), (0, 6, 3), (0, 5, 4),
         # cin=1 (8) - chosen to avoid overlap with BACKGROUND_B cin=1 entries
-        (1, 7, 8), (1, 8, 7), (1, 9, 6), (1, 6, 9),
-        (1, 8, 9), (1, 9, 8), (1, 7, 9), (1, 9, 7),
+        (1, 7, 8), (1, 8, 0), (1, 9, 6), (1, 5, 9),
+        (1, 8, 9), (1, 4, 8), (1, 7, 9), (1, 9, 2),
     ]
 
     # ----------------------------------------------------------------------
@@ -334,8 +334,8 @@ def main():
         )),
     ]
 
-    n_train_setting2 = 40000
-    n_test_setting2 = 40000
+    n_train_setting2 = 30000
+    n_test_setting2 = 30000
     #n_train_setting2 = 10
     #n_test_setting2 = 10
     seed_setting2 = 42
