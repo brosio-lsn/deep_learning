@@ -12,12 +12,7 @@ from src.data.addition_algo import BoardConfig
 from src.data.problems import generate_diversified_problems
 from src.data.board_dataset import BlackboardAdditionStepDataset
 from src.models.transformers import BlackboardTransformer
-from src.models.positional_encodings import (
-    SinusoidalPositionalEncoding,
-    AbsolutePositionalEncoding2D,
-    RelativePositionBias2D,
-    Abs2DPlusRelBias2D,
-)
+from src.models.positional_encodings import *
 
 
 # ---------------------------------------------------------------------------
@@ -187,12 +182,15 @@ def main():
     # -------------------------
     # Data: 5-digit addition
     # -------------------------
-    n_digits = 5
+    n_digits = 7
     cfg = BoardConfig(H=4, W=n_digits + 2, n_digits=n_digits)
     max_len = cfg.H * cfg.W
 
     n_train = 150000
     n_test  = 150000
+
+    n_train = 20
+    n_test  = 20
 
 
     print(f"Generating data: {n_train} train problems, {n_test} test problems (5-digit)")
@@ -201,30 +199,58 @@ def main():
 
     dropout = 0.1
     batch_size = 256
-    num_epochs = 10
+    num_epochs = 1
     lr = 3e-4
 
     # Include your mixed variant here
-    pe_names = ["Relative PE", "Sinusoidal PE", "Absolute PE", "Abs+Rel PE"]
+    # Include all variants here
+    pe_names = [
+        "Relative PE (2D bias)",
+        "Sinusoidal PE (1D abs)",
+        "Learned PE (1D abs)",
+        "Sinusoidal PE (2D abs)",
+        "Learned PE (2D abs)",
+        "Sin2D + RelBias2D",
+        "Learn2D + RelBias2D",
+    ]
 
     def build_pos_enc(pe_name: str, d_model: int, n_heads: int):
         """Factory: build the PE module consistent with d_model / n_heads."""
-        if pe_name == "Relative PE":
+        if pe_name == "Relative PE (2D bias)":
             return RelativePositionBias2D(n_heads, cfg.H, cfg.W)
-        if pe_name == "Sinusoidal PE":
+
+        # 1D absolute
+        if pe_name == "Sinusoidal PE (1D abs)":
             return SinusoidalPositionalEncoding(d_model, max_len=max_len)
-        if pe_name == "Absolute PE":
-            return AbsolutePositionalEncoding2D(d_model, cfg.H, cfg.W)
-        if pe_name == "Abs+Rel PE":
+        if pe_name == "Learned PE (1D abs)":
+            return LearnedPositionalEncoding1D(d_model, max_len=max_len)
+
+        # 2D absolute
+        if pe_name == "Sinusoidal PE (2D abs)":
+            return SinusoidalPositionalEncoding2D(d_model, cfg.H, cfg.W)
+        if pe_name == "Learned PE (2D abs)":
+            return LearnedPositionalEncoding2D(d_model, cfg.H, cfg.W)
+
+        # 2D absolute + 2D relative bias
+        if pe_name == "Sin2D + RelBias2D":
             return Abs2DPlusRelBias2D(
-                abs_pe=AbsolutePositionalEncoding2D(d_model, cfg.H, cfg.W),
+                abs_pe=SinusoidalPositionalEncoding2D(d_model, cfg.H, cfg.W),
                 rel_bias=RelativePositionBias2D(n_heads, cfg.H, cfg.W),
             )
+        if pe_name == "Learn2D + RelBias2D":
+            return Abs2DPlusRelBias2D(
+                abs_pe=LearnedPositionalEncoding2D(d_model, cfg.H, cfg.W),
+                rel_bias=RelativePositionBias2D(n_heads, cfg.H, cfg.W),
+            )
+
         raise ValueError(f"Unknown PE name: {pe_name}")
+
 
     # ----------------------------------------------------------------------
     # Experiment 1: width sweep (vary d_model, d_ff), fixed layers & heads
     # ----------------------------------------------------------------------
+
+    """
     print("\n==================== Experiment 1: Width sweep ====================")
 
     width_configs: List[Tuple[int, int]] = [
@@ -290,7 +316,7 @@ def main():
     plt.tight_layout()
     plt.savefig("pe_scaling_exp1_width_vs_params.png")
     plt.close()
-
+    """
     # ----------------------------------------------------------------------
     # Experiment 2: depth sweep (vary num_layers), fixed width & heads
     # ----------------------------------------------------------------------
@@ -298,62 +324,71 @@ def main():
 
     d_model_exp2 = 128
     d_ff_exp2    = 512
-    n_heads_exp2 = 2
 
-    if d_model_exp2 % n_heads_exp2 != 0:
-        raise ValueError("d_model_exp2 must be divisible by n_heads_exp2")
+    # test both 1 head and 2 heads (keep everything else the same)
+    heads_list = [1, 2]
 
     layers_list = [1, 2, 3, 4, 5, 6]
 
-    exp2_results: Dict[str, Dict[str, List[float]]] = {
-        name: {"layers": [], "acc": []} for name in pe_names
+    # results indexed by n_heads, then pe_name
+    exp2_results: Dict[int, Dict[str, Dict[str, List[float]]]] = {
+        nh: {name: {"layers": [], "acc": []} for name in pe_names}
+        for nh in heads_list
     }
 
-    for L in layers_list:
-        print(f"\n[Exp2] num_layers={L}, d_model={d_model_exp2}, d_ff={d_ff_exp2}, heads={n_heads_exp2}")
+    for n_heads_exp2 in heads_list:
+        if d_model_exp2 % n_heads_exp2 != 0:
+            raise ValueError(f"d_model_exp2 must be divisible by n_heads_exp2 (got {d_model_exp2} % {n_heads_exp2})")
 
+        for L in layers_list:
+            print(f"\n[Exp2] num_layers={L}, d_model={d_model_exp2}, d_ff={d_ff_exp2}, heads={n_heads_exp2}")
+
+            for pe_name in pe_names:
+                pos_enc = build_pos_enc(pe_name, d_model=d_model_exp2, n_heads=n_heads_exp2)
+
+                acc, _ = train_one_model(
+                    cfg=cfg,
+                    train_problems=train_problems,
+                    test_problems=test_problems,
+                    pos_enc_name=f"{pe_name} (depth sweep, heads={n_heads_exp2})",
+                    pos_enc_module=pos_enc,
+                    device=device,
+                    d_model=d_model_exp2,
+                    n_heads=n_heads_exp2,
+                    num_layers=L,
+                    dim_feedforward=d_ff_exp2,
+                    dropout=dropout,
+                    batch_size=batch_size,
+                    num_epochs=num_epochs,
+                    lr=lr,
+                )
+
+                exp2_results[n_heads_exp2][pe_name]["layers"].append(L)
+                exp2_results[n_heads_exp2][pe_name]["acc"].append(acc)
+
+    # plot: one figure per head count
+    for n_heads_exp2 in heads_list:
+        plt.figure()
         for pe_name in pe_names:
-            pos_enc = build_pos_enc(pe_name, d_model=d_model_exp2, n_heads=n_heads_exp2)
+            layers = exp2_results[n_heads_exp2][pe_name]["layers"]
+            accs   = exp2_results[n_heads_exp2][pe_name]["acc"]
+            plt.plot(layers, accs, marker="o", label=pe_name)
 
-            acc, _ = train_one_model(
-                cfg=cfg,
-                train_problems=train_problems,
-                test_problems=test_problems,
-                pos_enc_name=f"{pe_name} (depth sweep)",
-                pos_enc_module=pos_enc,
-                device=device,
-                d_model=d_model_exp2,
-                n_heads=n_heads_exp2,
-                num_layers=L,
-                dim_feedforward=d_ff_exp2,
-                dropout=dropout,
-                batch_size=batch_size,
-                num_epochs=num_epochs,
-                lr=lr,
-            )
+        plt.xlabel("Number of Transformer layers")
+        plt.ylabel("Test masked accuracy")
+        plt.ylim(0.0, 1.05)
+        plt.title(f"Scaling with depth (7-digit addition) - heads={n_heads_exp2}")
+        plt.grid(True)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(f"pe_scaling_exp2_depth_vs_acc_heads{n_heads_exp2}.png")
+        plt.close()
 
-            exp2_results[pe_name]["layers"].append(L)
-            exp2_results[pe_name]["acc"].append(acc)
-
-    plt.figure()
-    for pe_name in pe_names:
-        layers = exp2_results[pe_name]["layers"]
-        accs   = exp2_results[pe_name]["acc"]
-        plt.plot(layers, accs, marker="o", label=pe_name)
-
-    plt.xlabel("Number of Transformer layers")
-    plt.ylabel("Test masked accuracy")
-    plt.ylim(0.0, 1.05)
-    plt.title("Scaling with depth (5-digit addition)")
-    plt.grid(True)
-    plt.legend()
-    plt.tight_layout()
-    plt.savefig("pe_scaling_exp2_depth_vs_acc.png")
-    plt.close()
 
     # ----------------------------------------------------------------------
     # Experiment 3: head sweep (vary n_heads), fixed width & depth
     # ----------------------------------------------------------------------
+    """
     print("\n==================== Experiment 3: Head sweep ====================")
 
     d_model_exp3 = 132
@@ -411,7 +446,7 @@ def main():
     plt.tight_layout()
     plt.savefig("pe_scaling_exp3_heads_vs_acc.png")
     plt.close()
-
+    """
 
 if __name__ == "__main__":
     main()

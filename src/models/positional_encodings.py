@@ -173,9 +173,10 @@ class LearnedPositionalEncoding2D(nn.Module):
         self.register_buffer("col_idx", col_idx, persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-
+        """
         x: (B, L, D) where L == H * W
-
+        returns x + PE
+        """
         B, L, D = x.shape
         assert D == self.d_model, "Mismatch in d_model."
         assert L == self.H * self.W, "Sequence length must be H*W for 2D PE."
