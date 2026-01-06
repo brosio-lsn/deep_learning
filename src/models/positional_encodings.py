@@ -35,6 +35,33 @@ class SinusoidalPositionalEncoding(nn.Module):
         L = x.size(1)
         return x + self.pe[:, :L, :]
     
+class LearnedPositionalEncoding1D(nn.Module):
+    """
+    Learned 1D absolute positional encoding (trainable).
+    Like GPT/BERT learned position embeddings.
+
+    Adds a trainable embedding for each position 0..max_len-1.
+    """
+    def __init__(self, d_model: int, max_len: int = 500):
+        super().__init__()
+        self.d_model = d_model
+        self.max_len = max_len
+        self.pos_emb = nn.Embedding(max_len, d_model)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """
+        x: (B, L, D)
+        """
+        B, L, D = x.shape
+        if D != self.d_model:
+            raise ValueError(f"Mismatch in d_model: x has D={D}, expected {self.d_model}")
+        if L > self.max_len:
+            raise ValueError(f"Sequence length L={L} exceeds max_len={self.max_len}")
+
+        positions = torch.arange(L, device=x.device, dtype=torch.long)  # (L,)
+        pe = self.pos_emb(positions).unsqueeze(0)  # (1, L, D)
+        return x + pe
+
 
 def _build_sinusoid_table(length: int, d_model: int, device=None, dtype=torch.float32) -> torch.Tensor:
     """
@@ -59,7 +86,7 @@ def _build_sinusoid_table(length: int, d_model: int, device=None, dtype=torch.fl
     return pe
 
 
-class AbsolutePositionalEncoding2D(nn.Module):
+class SinusoidalPositionalEncoding2D(nn.Module):
     """
     Fixed 2D absolute positional encoding for an H x W grid (NO learnable params).
 
@@ -116,9 +143,8 @@ class AbsolutePositionalEncoding2D(nn.Module):
 # ---------------------------------------------------------------------------
 # 2D absolute PE: row + column embeddings (DETR-style)
 # ---------------------------------------------------------------------------
-"""
-class AbsolutePositionalEncoding2D(nn.Module):
-
+class LearnedPositionalEncoding2D(nn.Module):
+    """
     2D absolute positional encoding for an H x W grid.
 
     For each flattened position p (0..H*W-1), we compute:
@@ -127,6 +153,7 @@ class AbsolutePositionalEncoding2D(nn.Module):
         PE[p] = row_emb[row] + col_emb[col]
 
     This is the "row+column embeddings" style often used in vision Transformers.
+    """
 
 
     def __init__(self, d_model: int, H: int, W: int):
@@ -159,7 +186,6 @@ class AbsolutePositionalEncoding2D(nn.Module):
         pe = pe.unsqueeze(0)                 # (1, L, D) for broadcast
 
         return x + pe
-"""
 
 # ---------------------------------------------------------------------------
 # 2D relative position bias: B(q,k) = b_x(Δx) + b_y(Δy)

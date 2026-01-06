@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from pathlib import Path
 
 root = Path(".")  # script is in models/
-pes = ["absolute_pe", "relative_pe", "abs_rel_pe", "cot2", "sinusoidal_pe"]
+pes = ["cot1", "abs_2d_learned", "rel_2d_bias", "abs_1d_learned", "abs_2d_sin+rel_2d_bias", "abs_1d_sinusoidal", "abs_2d_sinusoidal", "cot2"]
 
 THRESH = 0.9
 MAX_EPOCHS = 10
@@ -69,5 +69,5 @@ plt.title("Learning speed by positional encoding")
 plt.grid(True, axis="y", alpha=0.3)
 
 plt.tight_layout()
-plt.savefig("pe_speed_acc09-2.png", dpi=300, bbox_inches="tight")
+plt.savefig("pe_speed_acc09-final.png", dpi=300, bbox_inches="tight")
 plt.show()

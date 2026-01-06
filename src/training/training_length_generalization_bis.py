@@ -164,7 +164,7 @@ def main():
     n_val_problems = 20_000
     #n_train_problems_total = 20
     #n_val_problems = 20
-    batch_size = 64
+    batch_size = 512
     num_epochs = 8
     #num_epochs = 1
     lr = 3e-4
@@ -183,9 +183,9 @@ def main():
     pe_specs = [
     ("Relative PE",   lambda: RelativePositionBias2D(n_heads, base_cfg.H, base_cfg.W)),
     ("Sinusoidal PE", lambda: SinusoidalPositionalEncoding(d_model, max_len=max_len)),
-    ("Absolute PE",   lambda: AbsolutePositionalEncoding2D(d_model, base_cfg.H, base_cfg.W)),
+    ("Absolute PE",   lambda: SinusoidalPositionalEncoding2D(d_model, base_cfg.H, base_cfg.W)),
     ("Abs+Rel PE",    lambda: Abs2DPlusRelBias2D(
-        abs_pe=AbsolutePositionalEncoding2D(d_model, base_cfg.H, base_cfg.W),
+        abs_pe=SinusoidalPositionalEncoding2D(d_model, base_cfg.H, base_cfg.W),
         rel_bias=RelativePositionBias2D(n_heads, base_cfg.H, base_cfg.W),
     )),
     ]

@@ -206,7 +206,7 @@ def main():
     num_layers = 3
     dim_feedforward = 512
     dropout = 0.1
-    batch_size = 128
+    batch_size = 512
     num_epochs = 12                      
     #num_epochs = 1
     lr = 3e-4
