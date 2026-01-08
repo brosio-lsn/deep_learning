@@ -134,45 +134,9 @@ if __name__ == "__main__":
 
     n_train = 40_000
     n_val = 10_000
-
     model_cfgs = [
         ModelConfig(
-            d_model=64,
-            nhead=1,
-            num_layers=2,
-            dim_feedforward=256,
-            dropout=0.1,
-            max_len=200,
-        ),
-
-        ModelConfig(
-            d_model=64,
-            nhead=2,
-            num_layers=3,
-            dim_feedforward=256,
-            dropout=0.1,
-            max_len=200,
-        ),
-
-        ModelConfig(
             d_model=128,
-            nhead=2,
-            num_layers=3,
-            dim_feedforward=512,
-            dropout=0.1,
-            max_len=200,
-        ),
-
-        ModelConfig(
-            d_model=128,
-            nhead=4,
-            num_layers=4,
-            dim_feedforward=512,
-            dropout=0.1,
-            max_len=200,
-        ),
-        ModelConfig(
-            d_model=256,
             nhead=4,
             num_layers=4,
             dim_feedforward=512,
