@@ -11,12 +11,8 @@ from typing import List, Tuple, Dict
 from src.data.addition_algo import BoardConfig
 from src.data.board_dataset import BlackboardAdditionStepDataset
 from src.models.transformers import BlackboardTransformer
-from src.models.positional_encodings import (
-    SinusoidalPositionalEncoding,
-    AbsolutePositionalEncoding2D,
-    RelativePositionBias2D,
-    Abs2DPlusRelBias2D,
-)
+from src.models.positional_encodings import *
+
 
 from src.data.sample_efficiency import (
     Triplet,
@@ -206,9 +202,9 @@ def main():
     num_layers = 3
     dim_feedforward = 512
     dropout = 0.1
-    batch_size = 128
-    num_epochs = 10
-    #num_epochs = 1
+    batch_size = 512
+    num_epochs = 10            
+    num_epochs = 1
     lr = 3e-4
 
     # -------------------------------
@@ -220,24 +216,45 @@ def main():
 
     # Positional encodings for 3-digit experiments (includes NEW Abs+Rel)
     pes_3 = [
-        ("Relative PE",   RelativePositionBias2D(n_heads, cfg_3.H, cfg_3.W)),
-        ("Sinusoidal PE", SinusoidalPositionalEncoding(d_model, max_len=max_len_3)),
-        ("Absolute PE",   AbsolutePositionalEncoding2D(d_model, cfg_3.H, cfg_3.W)),
-        ("Abs+Rel PE",    Abs2DPlusRelBias2D(
-            abs_pe=AbsolutePositionalEncoding2D(d_model, cfg_3.H, cfg_3.W),
-            rel_bias=RelativePositionBias2D(n_heads, cfg_3.H, cfg_3.W),
-        )),
-    ]
+    # -----------------------------
+    # Relative-only (2D bias)
+    # -----------------------------
+    ("Relative PE (2D bias)", RelativePositionBias2D(n_heads, cfg_3.H, cfg_3.W)),
+
+    # -----------------------------
+    # Absolute-only (1D)
+    # -----------------------------
+    ("Sinusoidal PE (1D abs)", SinusoidalPositionalEncoding(d_model, max_len=max_len_3)),
+    ("Learned PE (1D abs)",    LearnedPositionalEncoding1D(d_model, max_len=max_len_3)),
+
+    # -----------------------------
+    # Absolute-only (2D)
+    # -----------------------------
+    ("Sinusoidal PE (2D abs)", SinusoidalPositionalEncoding2D(d_model, cfg_3.H, cfg_3.W)),
+    ("Learned PE (2D abs)",    LearnedPositionalEncoding2D(d_model, cfg_3.H, cfg_3.W)),
+
+    # -----------------------------
+    # Absolute + Relative (2D)
+    # -----------------------------
+    ("Sin2D + RelBias2D", Abs2DPlusRelBias2D(
+        abs_pe=SinusoidalPositionalEncoding2D(d_model, cfg_3.H, cfg_3.W),
+        rel_bias=RelativePositionBias2D(n_heads, cfg_3.H, cfg_3.W),
+    )),
+    ("Learn2D + RelBias2D", Abs2DPlusRelBias2D(
+        abs_pe=LearnedPositionalEncoding2D(d_model, cfg_3.H, cfg_3.W),
+        rel_bias=RelativePositionBias2D(n_heads, cfg_3.H, cfg_3.W),
+    )),
+]
 
     # ----------------------------------------------------------------------
     # Setting 1: random subset size sweep (fraction of a fixed max_train)
     # ----------------------------------------------------------------------
     print("\n==================== SETTING 1: Random fraction sweep ====================")
 
-    max_train_setting1 = 50000
-    n_test_setting1 = 50000
-    #max_train_setting1 = 10
-    #n_test_setting1 = 10
+    max_train_setting1 = 40000
+    n_test_setting1 = 40000
+    max_train_setting1 = 10
+    n_test_setting1 = 10
     seed_base = 0
 
     frac_values = [0.025, 0.05, 0.075, 0.1, 0.2, 0.3, 0.4, 0.6, 0.8, 1.0]
@@ -285,8 +302,8 @@ def main():
     plt.title("Setting 1: sample size vs accuracy (3-digit)")
     plt.grid(True)
     plt.legend()
-    plt.savefig("/cluster/project/infk/krause/wnanadavies/deep_learning/plots/setting1_sample_efficiency.png")
-    #plt.savefig("s1.png")
+    #plt.savefig("/cluster/project/infk/krause/wnanadavies/deep_learning/plots/setting1_sample_efficiency.png")
+    plt.savefig("s1.png")
     plt.close()
 
     # ----------------------------------------------------------------------
@@ -312,8 +329,8 @@ def main():
         (0, 7, 0), (0, 7, 2), (0, 8, 1), (0, 8, 3),
         (0, 9, 2), (0, 9, 4), (0, 6, 3), (0, 5, 4),
         # cin=1 (8) - chosen to avoid overlap with BACKGROUND_B cin=1 entries
-        (1, 7, 8), (1, 8, 7), (1, 9, 6), (1, 6, 9),
-        (1, 8, 9), (1, 9, 8), (1, 7, 9), (1, 9, 7),
+        (1, 7, 8), (1, 8, 0), (1, 9, 6), (1, 5, 9),
+        (1, 8, 9), (1, 4, 8), (1, 7, 9), (1, 9, 2),
     ]
 
     # ----------------------------------------------------------------------
@@ -325,19 +342,41 @@ def main():
     max_len_10 = cfg_10.H * cfg_10.W
 
     pes_10 = [
-        ("Relative PE",   RelativePositionBias2D(n_heads, cfg_10.H, cfg_10.W)),
-        ("Sinusoidal PE", SinusoidalPositionalEncoding(d_model, max_len=max_len_10)),
-        ("Absolute PE",   AbsolutePositionalEncoding2D(d_model, cfg_10.H, cfg_10.W)),
-        ("Abs+Rel PE",    Abs2DPlusRelBias2D(
-            abs_pe=AbsolutePositionalEncoding2D(d_model, cfg_10.H, cfg_10.W),
-            rel_bias=RelativePositionBias2D(n_heads, cfg_10.H, cfg_10.W),
-        )),
-    ]
+    # -----------------------------
+    # Relative-only (2D bias)
+    # -----------------------------
+    ("Relative PE (2D bias)", RelativePositionBias2D(n_heads, cfg_10.H, cfg_10.W)),
 
-    n_train_setting2 = 40000
-    n_test_setting2 = 40000
-    #n_train_setting2 = 10
-    #n_test_setting2 = 10
+    # -----------------------------
+    # Absolute-only (1D)
+    # -----------------------------
+    ("Sinusoidal PE (1D abs)", SinusoidalPositionalEncoding(d_model, max_len=max_len_10)),
+    ("Learned PE (1D abs)",    LearnedPositionalEncoding1D(d_model, max_len=max_len_10)),
+
+    # -----------------------------
+    # Absolute-only (2D)
+    # -----------------------------
+    ("Sinusoidal PE (2D abs)", SinusoidalPositionalEncoding2D(d_model, cfg_10.H, cfg_10.W)),
+    ("Learned PE (2D abs)",    LearnedPositionalEncoding2D(d_model, cfg_10.H, cfg_10.W)),
+
+    # -----------------------------
+    # Absolute + Relative (2D)
+    # -----------------------------
+    ("Sin2D + RelBias2D", Abs2DPlusRelBias2D(
+        abs_pe=SinusoidalPositionalEncoding2D(d_model, cfg_10.H, cfg_10.W),
+        rel_bias=RelativePositionBias2D(n_heads, cfg_10.H, cfg_10.W),
+    )),
+    ("Learn2D + RelBias2D", Abs2DPlusRelBias2D(
+        abs_pe=LearnedPositionalEncoding2D(d_model, cfg_10.H, cfg_10.W),
+        rel_bias=RelativePositionBias2D(n_heads, cfg_10.H, cfg_10.W),
+    )),
+]
+
+
+    n_train_setting2 = 30000
+    n_test_setting2 = 30000
+    n_train_setting2 = 10
+    n_test_setting2 = 10
     seed_setting2 = 42
 
     frac_pos_values = [i / 10.0 for i in range(1, 10)]  # 0.1..0.9
@@ -392,8 +431,8 @@ def main():
     plt.title("Setting 2: position split vs accuracy (10-digit)")
     plt.grid(True)
     plt.legend()
-    plt.savefig("/cluster/project/infk/krause/wnanadavies/deep_learning/plots/setting2_position_split_10digit.png")
-    #plt.savefig("s2.png")
+    #plt.savefig("/cluster/project/infk/krause/wnanadavies/deep_learning/plots/setting2_position_split_10digit.png")
+    plt.savefig("s2.png")
     plt.close()
 
     # ----------------------------------------------------------------------
@@ -409,8 +448,8 @@ def main():
 
     n_train_setting3 = 40000
     n_test_setting3 = 40000
-    #n_train_setting3 = 10
-    #n_test_setting3 = 10
+    n_train_setting3 = 10
+    n_test_setting3 = 10
     seed_setting3 = 123
 
     # UPDATED generate_setting3_order_constraint returns (train, test, B_by_cin, Ptrain_by_cin, Ptest_by_cin)
@@ -469,8 +508,8 @@ def main():
 
     n_train_setting4 = 40000
     n_test_setting4 = 40000
-    #n_train_setting4 = 10
-    #n_test_setting4 = 10
+    n_train_setting4 = 10
+    n_test_setting4 = 10
     seed_setting4 = 999
 
     train4, test4, _B4, _H4 = generate_setting4_triplet_holdout(

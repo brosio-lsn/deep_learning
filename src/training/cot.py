@@ -12,7 +12,7 @@ from src.training.trainers import COTTrainer
 from src.data.cot_dataset import CoTAdditionDataset, COT_VOCAB_TOKENS, ID2TOK
 from src.data.sampler import BucketBatchSampler
 from src.models.transformers import COTTransformer
-
+import os 
 
 
 def masked_cross_entropy(logits, target_ids, mask):
@@ -34,6 +34,13 @@ def masked_cross_entropy(logits, target_ids, mask):
 
     return F.cross_entropy(logits_sel, targets_sel)
 
+def model_cfg_name(cfg: ModelConfig) -> str:
+    return (
+        f"d{cfg.d_model}"
+        f"_h{cfg.nhead}"
+        f"_L{cfg.num_layers}"
+        f"_ff{cfg.dim_feedforward}"
+    )
 
 
 if __name__ == "__main__":
@@ -45,10 +52,7 @@ if __name__ == "__main__":
 
     n_train = 40_000
     n_val = 10_000
-    batch_size = 64
-    num_epochs = 5
-    lr = 3e-4
-
+    batch_size = 128
 
     train_problems = generate_diversified_problems(cfg, n_train, seed=0)
     val_problems   = generate_diversified_problems(cfg, n_val, seed=1)
@@ -109,14 +113,14 @@ if __name__ == "__main__":
     ]
 
     train_cfg = TrainConfig(
-        batch_size = 64,
+        batch_size = batch_size,
         num_epochs = 10,
         lr = 3e-4,
         log_interval = 0.1, 
         enable_docs=True,
         save_model = True,
         seed = 42,
-        exp_name = "cot_addition",
+        exp_name = "cot_addition2",
         out_dir = "models"
     )
 
@@ -131,9 +135,10 @@ if __name__ == "__main__":
         masked_cross_entropy_fn=masked_cross_entropy
     )
 
-    for cfg in model_cfgs:
+    for model_cfg in model_cfgs:
 
-        model_cfg = cfg
+        cfg_name = model_cfg_name(model_cfg)
+        train_cfg.exp_name = os.path.join("cot2", cfg_name)
 
         model = COTTransformer(
             vocab_size= len(COT_VOCAB_TOKENS),

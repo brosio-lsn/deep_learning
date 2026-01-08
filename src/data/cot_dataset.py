@@ -241,26 +241,33 @@ class CoTAdditionDataset(Dataset):
         this_step_start = comma_position - 7
 
         token_ids = token_ids[:(carry_pos + 1)]
-        # shifts for decoder
+
+
+        """
+        # shifts for decoder cot1
         labels = token_ids[1:] 
         inputs = token_ids[:-1]
+        seq_len = len(labels)
+        """
 
-        seq_len = len(inputs)
+        seq_len = len(token_ids)
+        inputs = token_ids.copy()
+        inputs[this_step_start:] = [ VOCAB['PAD'] ] * (seq_len - this_step_start)
+        labels = token_ids.copy()
 
         # Build loss mask aligned with labels
         loss_mask = [False] * seq_len
         # we do not care about prompt
         loss_mask[this_step_start:] = [True] * (seq_len - this_step_start)
-        #loss_mask[this_step_start:] = [True] * (seq_len - this_step_start)
         # Build attention mask
-        attn_mask = build_decoder_mask(seq_len)
+        #attn_mask = build_decoder_mask(seq_len) cot2
 
         return {
             "input_ids": torch.tensor(inputs, dtype=torch.long), # (L_prefix + L_step, ) # all real ids (without last one)
             "label_ids": torch.tensor(labels, dtype=torch.long), # (L_prefix + L_step, ) # all real ids (without first one)
             "loss_mask": torch.tensor(loss_mask, dtype=torch.bool), # (L_prefix + L_step, ) # only true for current step
-            "attn_mask": attn_mask,   # (L_prefix + L_step, L_prefix + L_step) float tensor with -inf for positions a token cannot attend
-            "digit_pos": digit_pos -  1,
-            "carry_pos": carry_pos - 1,
+          #  "attn_mask": attn_mask,   # (L_prefix + L_step, L_prefix + L_step) float tensor with -inf for positions a token cannot attend
+            "digit_pos": digit_pos,
+            "carry_pos": carry_pos,
             "this_step_start": this_step_start
         }

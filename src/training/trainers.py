@@ -258,9 +258,6 @@ class COTTrainer:
             "val_digit_acc": [],
         }
 
-        self.global_step = 0
-        self.run_dir = os.path.join(self.cfg.out_dir, self.cfg.exp_name, str(self.global_step))
-        os.makedirs(self.run_dir, exist_ok=True)
        
     
 
@@ -364,14 +361,14 @@ class COTTrainer:
                 input_ids = batch["input_ids"].to(self.device)
                 target_ids = batch["label_ids"].to(self.device)
                 loss_mask = batch["loss_mask"].to(self.device)
-                attn_mask = batch["attn_mask"][0].to(self.device)
+               # attn_mask = batch["attn_mask"][0].to(self.device)
                 digit_positions = batch["digit_pos"].to(self.device)
                 carry_positions = batch["carry_pos"].to(self.device)
 
                 if is_train:
                     self.optimizer.zero_grad()
 
-                logits, _ = self.model(input_ids, src_mask=attn_mask)
+                logits, _ = self.model(input_ids)
                 loss = self.masked_ce(logits, target_ids, loss_mask)
 
                 if is_train:
@@ -442,6 +439,11 @@ class COTTrainer:
 
     def fit(self):
 
+
+        self.run_dir = os.path.join(self.cfg.out_dir, self.cfg.exp_name)
+
+        os.makedirs(self.run_dir, exist_ok=True)
+
         print("Starting training CoT transformer ...")
         for epoch in range(1, self.cfg.num_epochs + 1):
             train_metrics = self._run_epoch(loader=self.train_loader, mode="train", epoch=epoch)
@@ -495,9 +497,6 @@ class COTTrainer:
                 f"val_digit_acc={self.history['val_digit_acc'][e]:.4f}"
             )
 
-        self.global_step += 1
-        self.run_dir = os.path.join(self.cfg.out_dir, self.cfg.exp_name, str(self.global_step))
-        os.makedirs(self.run_dir, exist_ok=True)
         self.history = {
             "train_loss": [],
             "train_acc": [],

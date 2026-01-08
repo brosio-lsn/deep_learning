@@ -95,31 +95,58 @@ def model_cfg_name(cfg: ModelConfig) -> str:
         f"_ff{cfg.dim_feedforward}"
     )
 
+
 def make_pes(model_cfg, board_cfg):
-    return [
+    return [ 
         (
-            "relative_pe",
+            "abs_1d_learned",
+            LearnedPositionalEncoding1D(
+                model_cfg.d_model, board_cfg.H * board_cfg.W
+            )
+        ),
+
+        (
+            "abs_1d_sinusoidal",
+            SinusoidalPositionalEncoding(
+                model_cfg.d_model,
+                model_cfg.max_len,
+            )
+        ),
+
+        (
+            "abs_2d_learned",
+            LearnedPositionalEncoding2D(
+                model_cfg.d_model,
+                board_cfg.H,
+                board_cfg.W
+            )
+        ),
+
+        (
+            "abs_2d_sin+rel_2d_bias",  Abs2DPlusRelBias2D(
+            abs_pe=SinusoidalPositionalEncoding2D(model_cfg.d_model, board_cfg.H, board_cfg.W),
+            rel_bias=RelativePositionBias2D(model_cfg.nhead, board_cfg.H, board_cfg.W),
+            )
+        ),
+
+        (
+            "abs_2d_sinusoidal",
+            SinusoidalPositionalEncoding2D(
+                model_cfg.d_model,
+                board_cfg.H,
+                board_cfg.W,
+            )
+        ),
+
+        (
+            "rel_2d_bias",
             RelativePositionBias2D(
                 model_cfg.nhead,
                 board_cfg.H,
                 board_cfg.W,
             )
         ),
-        (
-            "sinusoidal_pe",
-            SinusoidalPositionalEncoding(
-                model_cfg.d_model,
-                model_cfg.max_len,
-            )
-        ),
-        (
-            "absolute_pe",
-            AbsolutePositionalEncoding2D(
-                model_cfg.d_model,
-                board_cfg.H,
-                board_cfg.W,
-            )
-        )
+    
     ]
 
 
@@ -146,7 +173,7 @@ if __name__ == "__main__":
     ]
 
     train_cfg = TrainConfig(
-        batch_size = 64,
+        batch_size = 512,
         num_epochs = 10,
         lr = 3e-4,
         log_interval = 0.1, 
