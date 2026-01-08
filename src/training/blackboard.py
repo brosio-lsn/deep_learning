@@ -8,6 +8,7 @@ from src.training.trainers import BlackboardTrainer
 from src.data.addition_algo import BoardConfig
 from src.data.problems import generate_problems, generate_diversified_problems
 from src.models.positional_encodings import *
+from src.models.pe_factory import make_pes
 from src.data.board_dataset import BlackboardAdditionStepDataset
 from src.models.transformers import BlackboardTransformer
 import os
@@ -95,59 +96,59 @@ def model_cfg_name(cfg: ModelConfig) -> str:
         f"_ff{cfg.dim_feedforward}"
     )
 
+# moved to src.models.pe_factory
+# def make_pes(model_cfg, board_cfg):
+#     return [ 
+#         (
+#             "abs_1d_learned",
+#             LearnedPositionalEncoding1D(
+#                 model_cfg.d_model, board_cfg.H * board_cfg.W
+#             )
+#         ),
 
-def make_pes(model_cfg, board_cfg):
-    return [ 
-        (
-            "abs_1d_learned",
-            LearnedPositionalEncoding1D(
-                model_cfg.d_model, board_cfg.H * board_cfg.W
-            )
-        ),
+#         (
+#             "abs_1d_sinusoidal",
+#             SinusoidalPositionalEncoding(
+#                 model_cfg.d_model,
+#                 model_cfg.max_len,
+#             )
+#         ),
 
-        (
-            "abs_1d_sinusoidal",
-            SinusoidalPositionalEncoding(
-                model_cfg.d_model,
-                model_cfg.max_len,
-            )
-        ),
+#         (
+#             "abs_2d_learned",
+#             LearnedPositionalEncoding2D(
+#                 model_cfg.d_model,
+#                 board_cfg.H,
+#                 board_cfg.W
+#             )
+#         ),
 
-        (
-            "abs_2d_learned",
-            LearnedPositionalEncoding2D(
-                model_cfg.d_model,
-                board_cfg.H,
-                board_cfg.W
-            )
-        ),
+#         (
+#             "abs_2d_sin+rel_2d_bias",  Abs2DPlusRelBias2D(
+#             abs_pe=SinusoidalPositionalEncoding2D(model_cfg.d_model, board_cfg.H, board_cfg.W),
+#             rel_bias=RelativePositionBias2D(model_cfg.nhead, board_cfg.H, board_cfg.W),
+#             )
+#         ),
 
-        (
-            "abs_2d_sin+rel_2d_bias",  Abs2DPlusRelBias2D(
-            abs_pe=SinusoidalPositionalEncoding2D(model_cfg.d_model, board_cfg.H, board_cfg.W),
-            rel_bias=RelativePositionBias2D(model_cfg.nhead, board_cfg.H, board_cfg.W),
-            )
-        ),
+#         (
+#             "abs_2d_sinusoidal",
+#             SinusoidalPositionalEncoding2D(
+#                 model_cfg.d_model,
+#                 board_cfg.H,
+#                 board_cfg.W,
+#             )
+#         ),
 
-        (
-            "abs_2d_sinusoidal",
-            SinusoidalPositionalEncoding2D(
-                model_cfg.d_model,
-                board_cfg.H,
-                board_cfg.W,
-            )
-        ),
-
-        (
-            "rel_2d_bias",
-            RelativePositionBias2D(
-                model_cfg.nhead,
-                board_cfg.H,
-                board_cfg.W,
-            )
-        ),
+#         (
+#             "rel_2d_bias",
+#             RelativePositionBias2D(
+#                 model_cfg.nhead,
+#                 board_cfg.H,
+#                 board_cfg.W,
+#             )
+#         ),
     
-    ]
+#     ]
 
 
 if __name__ == "__main__":

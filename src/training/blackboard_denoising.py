@@ -21,11 +21,8 @@ from torch.utils.data import DataLoader
 from src.data.addition_algo import BoardConfig, VOCAB_SIZE
 from src.data.problems import generate_diversified_problems
 from src.data.board_dataset import BlackboardAdditionDenoisingStepDataset
-from src.models.positional_encodings import (
-    RelativePositionBias2D,
-    SinusoidalPositionalEncoding,
-    AbsolutePositionalEncoding2D,
-)
+from src.models.positional_encodings import *
+from src.models.pe_factory import make_pes
 from src.models.transformers import BlackboardTransformer
 from src.training.configs import ModelConfig, TrainConfig
 from src.training.trainers import BlackboardTrainer
@@ -179,11 +176,7 @@ def main():
     val_loader = DataLoader(val_ds, batch_size=train_cfg.batch_size, shuffle=False)
 
     # Positional encodings
-    pes = [
-        ("relative_pe", RelativePositionBias2D(model_cfg.nhead, board_cfg.H, board_cfg.W)),
-        ("sinusoidal_pe", SinusoidalPositionalEncoding(model_cfg.d_model, model_cfg.max_len)),
-        ("absolute_pe", AbsolutePositionalEncoding2D(model_cfg.d_model, board_cfg.H, board_cfg.W)),
-    ]
+    pes = make_pes(model_cfg, board_cfg)
 
     trainer = BlackboardTrainer(
         model=None,

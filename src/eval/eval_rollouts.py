@@ -8,9 +8,12 @@ from src.data.addition_algo import BoardConfig, generate_trajectory_variant_A, V
 from src.data.problems import generate_diversified_problems
 from src.models.transformers import BlackboardTransformer
 from src.models.positional_encodings import (
-    RelativePositionBias2D,
+    LearnedPositionalEncoding1D,
     SinusoidalPositionalEncoding,
-    AbsolutePositionalEncoding2D,
+    LearnedPositionalEncoding2D,
+    Abs2DPlusRelBias2D,
+    SinusoidalPositionalEncoding2D,
+    RelativePositionBias2D,
 )
 from src.training.configs import ModelConfig
 
@@ -206,23 +209,38 @@ def rollout_one(model, cfg: BoardConfig, xs: np.ndarray, setting: str, max_iters
 
 
 def make_pe(pe_name: str, cfg_model: ModelConfig, cfg_board: BoardConfig):
-    if pe_name == "relative_pe":
-        return RelativePositionBias2D(cfg_model.nhead, cfg_board.H, cfg_board.W)
-    if pe_name == "sinusoidal_pe":
+    if pe_name == "abs_1d_learned":
+        return LearnedPositionalEncoding1D(cfg_model.d_model, cfg_board.H * cfg_board.W)
+
+    if pe_name == "abs_1d_sinusoidal":
         return SinusoidalPositionalEncoding(cfg_model.d_model, cfg_model.max_len)
-    if pe_name == "absolute_pe":
-        return AbsolutePositionalEncoding2D(cfg_model.d_model, cfg_board.H, cfg_board.W)
+
+    if pe_name == "abs_2d_learned":
+        return LearnedPositionalEncoding2D(cfg_model.d_model, cfg_board.H, cfg_board.W)
+
+    if pe_name == "abs_2d_sin+rel_2d_bias":
+        return Abs2DPlusRelBias2D(
+            abs_pe=SinusoidalPositionalEncoding2D(cfg_model.d_model, cfg_board.H, cfg_board.W),
+            rel_bias=RelativePositionBias2D(cfg_model.nhead, cfg_board.H, cfg_board.W),
+        )
+
+    if pe_name == "abs_2d_sinusoidal":
+        return SinusoidalPositionalEncoding2D(cfg_model.d_model, cfg_board.H, cfg_board.W)
+
+    if pe_name == "rel_2d_bias":
+        return RelativePositionBias2D(cfg_model.nhead, cfg_board.H, cfg_board.W)
+
     raise ValueError(f"Unknown pe_name: {pe_name}")
+
 
 
 def main():
     p = argparse.ArgumentParser()
     p.add_argument("--ckpt", type=str, required=True)
     p.add_argument("--setting", choices=["local", "global"], required=True)
-    p.add_argument("--pe", choices=["relative_pe", "sinusoidal_pe", "absolute_pe"], required=True)
+    p.add_argument("--pe", choices=["abs_1d_learned", "abs_1d_sinusoidal", "abs_2d_learned", "abs_2d_sin+rel_2d_bias", "abs_2d_sinusoidal", "rel_2d_bias"], required=True)
     p.add_argument("--n-test", type=int, default=2000)
     p.add_argument("--vocab-size", type=int, default=13)
-
     p.add_argument("--p-noise", type=float, default=0.0, help="Probability per rollout step to inject noise into already-written cells.")
     p.add_argument("--n-noise", type=int, default=1, help="How many cells to corrupt when noise triggers.")
     p.add_argument("--noise-kind", choices=["flip_digit", "random_digit", "blank", "void"], default="flip_digit")
